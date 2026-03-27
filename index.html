@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amtrak Arrivals Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0c0f;
+    --panel: #0f1318;
+    --amber: #f5a623;
+    --green: #39d98a;
+    --red: #ff4d4d;
+    --blue: #4db8ff;
+    --muted: #4a5568;
+    --text: #e2e8f0;
+    --font-display: 'Bebas Neue', sans-serif;
+    --font-mono: 'Share Tech Mono', monospace;
+    --font-body: 'DM Sans', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+  }
+
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px 16px;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+  }
+
+  .station-name {
+    font-family: var(--font-display);
+    font-size: 3rem;
+    color: var(--amber);
+    line-height: 1;
+    letter-spacing: 2px;
+  }
+
+  .station-meta {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .clock-wrap {
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .clock {
+    font-family: var(--font-display);
+    font-size: 2.5rem;
+    color: var(--amber);
+    line-height: 1;
+  }
+
+  .clock-date {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* ── Status bar ── */
+  .status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    padding: 8px 0;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .status-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  .status-dot.loading {
+    background: var(--amber);
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ── Progress bar ── */
+  .progress-track {
+    width: 100%;
+    height: 3px;
+    background: rgba(245,166,35,0.1);
+    margin-bottom: 16px;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--amber), #d4891a);
+    border-radius: 2px;
+    transition: width 1s linear;
+  }
+
+  /* ── Station switcher ── */
+  .station-switcher {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .station-switcher label {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .station-switcher input {
+    background: var(--panel);
+    border: 1px solid var(--muted);
+    color: var(--amber);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 4px 8px;
+    width: 60px;
+    text-transform: uppercase;
+    border-radius: 3px;
+    outline: none;
+  }
+
+  .station-switcher input:focus {
+    border-color: var(--amber);
+  }
+
+  .station-switcher button {
+    background: var(--amber);
+    color: var(--bg);
+    border: none;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    padding: 5px 12px;
+    cursor: pointer;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 700;
+  }
+
+  .station-switcher button:hover { opacity: 0.85; }
+
+  /* ── Board ── */
+  .board {
+    background: var(--panel);
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid rgba(245,166,35,0.08);
+  }
+
+  .board-header {
+    display: grid;
+    grid-template-columns: 70px 1fr 1fr 140px 130px;
+    padding: 10px 16px;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+    border-bottom: 1px solid rgba(245,166,35,0.1);
+  }
+
+  .board-row {
+    display: grid;
+    grid-template-columns: 70px 1fr 1fr 140px 130px;
+    padding: 12px 16px;
+    align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    border-left: 3px solid transparent;
+    transition: background 0.2s;
+  }
+
+  .board-row:hover {
+    background: rgba(255,255,255,0.02);
+  }
+
+  .board-row:last-child { border-bottom: none; }
+
+  .board-row.on-time { border-left-color: var(--green); }
+  .board-row.late { border-left-color: var(--red); }
+  .board-row.early { border-left-color: var(--blue); }
+  .board-row.scheduled { border-left-color: var(--muted); }
+
+  .train-num {
+    font-family: var(--font-display);
+    font-size: 1.8rem;
+    color: var(--amber);
+    line-height: 1;
+  }
+
+  .route-name {
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+
+  .route-nearest {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .direction {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+
+  .arrival-time {
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    color: var(--text);
+  }
+
+  .arrival-label {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--muted);
+    margin-top: 2px;
+    text-transform: uppercase;
+  }
+
+  .status-badge {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    text-align: center;
+    display: inline-block;
+  }
+
+  .status-badge.on-time { background: rgba(57,217,138,0.12); color: var(--green); }
+  .status-badge.late { background: rgba(255,77,77,0.12); color: var(--red); }
+  .status-badge.early { background: rgba(77,184,255,0.12); color: var(--blue); }
+  .status-badge.scheduled { background: rgba(74,85,104,0.15); color: var(--muted); }
+
+  /* ── Row detail expand ── */
+  .board-row.expandable { cursor: pointer; }
+
+  .detail-panel {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+    background: rgba(0,0,0,0.25);
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+
+  .detail-panel.open {
+    max-height: 2000px;
+    transition: max-height 0.5s ease;
+  }
+
+  .detail-inner {
+    padding: 12px 16px 16px;
+  }
+
+  .detail-heading {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .detail-stops {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .detail-stop {
+    display: grid;
+    grid-template-columns: 20px 1fr 90px 90px 60px;
+    align-items: center;
+    padding: 5px 0;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+    border-left: 2px solid rgba(74,85,104,0.3);
+    margin-left: 6px;
+    padding-left: 12px;
+    position: relative;
+  }
+
+  .detail-stop::before {
+    content: '';
+    position: absolute;
+    left: -5px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+
+  .detail-stop.departed { color: var(--text); opacity: 0.5; }
+  .detail-stop.departed::before { background: var(--text); opacity: 0.5; }
+
+  .detail-stop.current { color: var(--amber); }
+  .detail-stop.current::before { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+
+  .detail-stop.enroute { color: var(--text); }
+  .detail-stop.enroute::before { background: var(--muted); }
+
+  .detail-stop.this-station { color: var(--amber); font-weight: 700; }
+  .detail-stop.this-station::before { background: var(--amber); width: 10px; height: 10px; left: -6px; }
+
+  .detail-stop-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .detail-stop-code { color: var(--muted); font-size: 0.6rem; margin-left: 4px; }
+
+  .detail-stop-late { color: var(--red); font-size: 0.6rem; }
+  .detail-stop-early { color: var(--blue); font-size: 0.6rem; }
+  .detail-stop-ontime { color: var(--green); font-size: 0.6rem; }
+
+  @media (max-width: 700px) {
+    .detail-stop {
+      grid-template-columns: 20px 1fr 70px 70px;
+    }
+    .detail-stop .detail-stop-delta { display: none; }
+  }
+
+  /* ── Skeleton loading ── */
+  .skeleton-row {
+    display: grid;
+    grid-template-columns: 70px 1fr 1fr 140px 130px;
+    padding: 12px 16px;
+    gap: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+  }
+
+  .skeleton-block {
+    height: 20px;
+    background: linear-gradient(90deg, var(--panel) 25%, rgba(245,166,35,0.06) 50%, var(--panel) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: 3px;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 48px 16px;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  .error-banner {
+    background: rgba(255,77,77,0.1);
+    border: 1px solid rgba(255,77,77,0.3);
+    color: var(--red);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    padding: 8px 16px;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    display: none;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 700px) {
+    .board-header, .board-row {
+      grid-template-columns: 50px 1fr 100px 100px;
+    }
+    .board-header .col-dir, .board-row .col-dir { display: none; }
+    .station-name { font-size: 2rem; }
+    .clock { font-size: 1.8rem; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="station-name" id="stationName">LOADING…</div>
+      <div class="station-meta" id="stationMeta"></div>
+    </div>
+    <div class="clock-wrap">
+      <div class="clock" id="clock"></div>
+      <div class="clock-date" id="clockDate"></div>
+    </div>
+  </div>
+
+  <!-- Station switcher -->
+  <div class="station-switcher">
+    <label for="stationInput">Station:</label>
+    <input type="text" id="stationInput" maxlength="4" value="GBB">
+    <button id="stationGo">Go</button>
+  </div>
+
+  <!-- Error banner -->
+  <div class="error-banner" id="errorBanner"></div>
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    <div class="status-left">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="lastUpdated">LOADING…</span>
+    </div>
+    <div id="nextRefresh"></div>
+  </div>
+
+  <!-- Progress bar -->
+  <div class="progress-track">
+    <div class="progress-fill" id="progressFill" style="width:100%"></div>
+  </div>
+
+  <!-- Board -->
+  <div class="board">
+    <div class="board-header">
+      <div>Train</div>
+      <div>Route</div>
+      <div class="col-dir">Direction</div>
+      <div>Next Arrival</div>
+      <div>Status</div>
+    </div>
+    <div id="boardBody">
+      <!-- skeleton rows -->
+      <div class="skeleton-row"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>
+      <div class="skeleton-row"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>
+      <div class="skeleton-row"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>
+      <div class="skeleton-row"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const API_BASE = 'https://api-v3.amtraker.com/v3';
+  const REFRESH_MS = 10 * 60 * 1000; // 10 minutes
+
+  let stationCode = localStorage.getItem('amtrak_station') || 'GBB';
+  let stationTz = 'America/Chicago';
+  let lastFetchTime = null;
+  let refreshTimer = null;
+  let countdownTimer = null;
+  let refreshDeadline = null;
+
+  const $ = (id) => document.getElementById(id);
+
+  // ── Init ──
+  function init() {
+    $('stationInput').value = stationCode;
+    startClock();
+    fetchAndRender();
+    setupStationSwitcher();
+  }
+
+  // ── Station switcher ──
+  function setupStationSwitcher() {
+    $('stationGo').addEventListener('click', switchStation);
+    $('stationInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') switchStation();
+    });
+  }
+
+  function switchStation() {
+    const code = $('stationInput').value.trim().toUpperCase();
+    if (!code || code.length < 2 || code.length > 4) return;
+    stationCode = code;
+    localStorage.setItem('amtrak_station', code);
+    $('stationName').textContent = 'LOADING…';
+    $('stationMeta').textContent = '';
+    showSkeleton();
+    hideError();
+    clearTimers();
+    fetchAndRender();
+  }
+
+  // ── Clock ──
+  function startClock() {
+    function tick() {
+      const now = new Date();
+      try {
+        $('clock').textContent = now.toLocaleTimeString('en-US', {
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          hour12: true, timeZone: stationTz
+        });
+        $('clockDate').textContent = now.toLocaleDateString('en-US', {
+          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+          timeZone: stationTz
+        });
+      } catch {
+        $('clock').textContent = now.toLocaleTimeString('en-US', {
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+        });
+        $('clockDate').textContent = now.toLocaleDateString('en-US', {
+          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+        });
+      }
+    }
+    tick();
+    setInterval(tick, 1000);
+  }
+
+  // ── Countdown & progress ──
+  function startCountdown() {
+    refreshDeadline = Date.now() + REFRESH_MS;
+    clearInterval(countdownTimer);
+    countdownTimer = setInterval(() => {
+      const remaining = Math.max(0, refreshDeadline - Date.now());
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      $('nextRefresh').textContent = `NEXT REFRESH IN ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+      const pct = (remaining / REFRESH_MS) * 100;
+      $('progressFill').style.width = pct + '%';
+    }, 1000);
+  }
+
+  function clearTimers() {
+    clearTimeout(refreshTimer);
+    clearInterval(countdownTimer);
+  }
+
+  // ── Error handling ──
+  function showError(msg) {
+    const el = $('errorBanner');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  function hideError() {
+    $('errorBanner').style.display = 'none';
+  }
+
+  // ── Skeleton ──
+  function showSkeleton() {
+    let html = '';
+    for (let i = 0; i < 4; i++) {
+      html += '<div class="skeleton-row"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>';
+    }
+    $('boardBody').innerHTML = html;
+  }
+
+  // ── localStorage schedule ──
+  function getScheduleKey() {
+    return `amtrak_schedule_${stationCode}`;
+  }
+
+  function loadSchedule() {
+    try {
+      return JSON.parse(localStorage.getItem(getScheduleKey())) || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveSchedule(schedule) {
+    localStorage.setItem(getScheduleKey(), JSON.stringify(schedule));
+  }
+
+  // ── API calls ──
+  async function fetchStation() {
+    const resp = await fetch(`${API_BASE}/stations/${stationCode}`);
+    if (!resp.ok) throw new Error(`Station API returned ${resp.status}`);
+    const data = await resp.json();
+    return data[stationCode] || data[Object.keys(data)[0]];
+  }
+
+  async function fetchTrain(num) {
+    const resp = await fetch(`${API_BASE}/trains/${num}`);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    // API returns an object with trainNum keys, each containing an array of runs
+    // or it may return an array directly — handle both
+    if (Array.isArray(data)) return data;
+    // Object format: { "4": [ {...}, {...} ] } — flatten all runs
+    const runs = [];
+    for (const key of Object.keys(data)) {
+      const val = data[key];
+      if (Array.isArray(val)) runs.push(...val);
+      else if (val && typeof val === 'object') runs.push(val);
+    }
+    return runs.length ? runs : null;
+  }
+
+  // ── Main fetch & render ──
+  async function fetchAndRender() {
+    const dot = $('statusDot');
+    dot.classList.add('loading');
+    hideError();
+
+    try {
+      // 1. Fetch station data
+      const stationData = await fetchStation();
+      if (!stationData) throw new Error('Station not found');
+
+      // Update header
+      stationTz = stationData.tz || 'America/Chicago';
+      $('stationName').textContent = (stationData.name || stationCode).toUpperCase();
+      const metaParts = [stationData.code];
+      if (stationData.address1 && stationData.address1.trim()) metaParts.push(stationData.address1.trim());
+      if (stationData.city) metaParts.push(`${stationData.city}, ${stationData.state || ''}`);
+      $('stationMeta').textContent = metaParts.join(' · ');
+      document.title = `${stationData.name || stationCode} — Amtrak Arrivals`;
+
+      // 2. Extract unique train numbers from run IDs
+      const runIds = stationData.trains || [];
+      const trainNums = [...new Set(runIds.map(id => id.split('-')[0]))];
+
+      // 3. Fetch all train data in parallel
+      const trainResults = await Promise.all(trainNums.map(num => fetchTrain(num)));
+
+      // 4. Process each train
+      const schedule = loadSchedule();
+      const today = new Date().toISOString().slice(0, 10);
+      const liveTrains = []; // { trainNum, route, dir, arrivalTime, status, statusClass, dateLabel, nearestStation, isLive }
+
+      for (let i = 0; i < trainNums.length; i++) {
+        const num = trainNums[i];
+        const runs = trainResults[i];
+        if (!runs || runs.length === 0) continue;
+
+        // Find the best run: first one where this station is Enroute or Station
+        let bestRun = null;
+        let bestStop = null;
+
+        for (const run of runs) {
+          const stations = run.stations || [];
+          for (const stop of stations) {
+            if (stop.code === stationCode && (stop.status === 'Enroute' || stop.status === 'Station')) {
+              bestRun = run;
+              bestStop = stop;
+              break;
+            }
+          }
+          if (bestRun) break;
+        }
+
+        // If no enroute/station stop, check for departed (use first run to learn schedule)
+        let departedRun = null;
+        let departedStop = null;
+        if (!bestRun) {
+          for (const run of runs) {
+            const stations = run.stations || [];
+            for (const stop of stations) {
+              if (stop.code === stationCode && stop.status === 'Departed') {
+                departedRun = run;
+                departedStop = stop;
+                break;
+              }
+            }
+            if (departedRun) break;
+          }
+        }
+
+        // Use whichever run we found to upsert schedule
+        const refRun = bestRun || departedRun;
+        const refStop = bestStop || departedStop;
+
+        if (refRun && refStop) {
+          const schArrDate = refStop.schArr ? new Date(refStop.schArr) : null;
+          const schDepDate = refStop.schDep ? new Date(refStop.schDep) : null;
+
+          schedule[num] = {
+            schArr: schArrDate ? formatTimeInTz(schArrDate, stationTz) : (schedule[num]?.schArr || ''),
+            schDep: schDepDate ? formatTimeInTz(schDepDate, stationTz) : (schedule[num]?.schDep || ''),
+            route: refRun.routeName || schedule[num]?.route || '',
+            dir: `→ ${refRun.destName || ''}`,
+            destCode: refRun.destCode || '',
+            destName: refRun.destName || '',
+            origCode: refRun.origCode || '',
+            origName: refRun.origName || '',
+            firstSeen: schedule[num]?.firstSeen || today,
+            lastSeen: today
+          };
+        }
+
+        // Build display row
+        if (bestRun && bestStop) {
+          // Live train
+          const estArr = bestStop.arr ? new Date(bestStop.arr) : null;
+          const schArr = bestStop.schArr ? new Date(bestStop.schArr) : null;
+          let diffMin = 0;
+          let statusText = 'ON TIME';
+          let statusClass = 'on-time';
+
+          if (estArr && schArr) {
+            diffMin = Math.round((estArr - schArr) / 60000);
+            if (diffMin > 0) {
+              statusText = `${diffMin} MIN LATE`;
+              statusClass = 'late';
+            } else if (diffMin < 0) {
+              statusText = `${Math.abs(diffMin)} MIN EARLY`;
+              statusClass = 'early';
+            }
+          }
+
+          // Nearest station
+          let nearestStation = '';
+          if (bestRun.eventName) {
+            nearestStation = `NR: ${bestRun.eventName}`;
+          }
+
+          const dateLabel = getDateLabel(estArr, stationTz);
+
+          const runDay = bestRun.trainID ? bestRun.trainID.split('-').slice(1).join('-') : '';
+
+          liveTrains.push({
+            trainNum: num,
+            route: bestRun.routeName || schedule[num]?.route || '',
+            runDay,
+            dir: `→ ${bestRun.destName || ''}`,
+            arrivalTime: estArr ? formatTimeInTz(estArr, stationTz) : (schedule[num]?.schArr || '—'),
+            arrivalDate: estArr || new Date(),
+            status: statusText,
+            statusClass,
+            dateLabel,
+            nearestStation,
+            isLive: true,
+            stations: bestRun.stations || []
+          });
+        } else {
+          // Not active or already departed — show scheduled time
+          const sch = schedule[num];
+          if (sch && sch.schArr) {
+            liveTrains.push({
+              trainNum: num,
+              route: sch.route,
+              dir: sch.dir,
+              arrivalTime: sch.schArr,
+              arrivalDate: parseScheduledTime(sch.schArr, stationTz),
+              status: 'SCHEDULED',
+              statusClass: 'scheduled',
+              dateLabel: departedStop ? 'TOMORROW' : 'SCHEDULED',
+              nearestStation: '',
+              isLive: false
+            });
+          }
+        }
+      }
+
+      // Also add any trains from schedule that weren't in the current API response
+      for (const num of Object.keys(schedule)) {
+        if (!trainNums.includes(num)) {
+          const sch = schedule[num];
+          if (sch && sch.schArr) {
+            liveTrains.push({
+              trainNum: num,
+              route: sch.route,
+              dir: sch.dir,
+              arrivalTime: sch.schArr,
+              arrivalDate: parseScheduledTime(sch.schArr, stationTz),
+              status: 'SCHEDULED',
+              statusClass: 'scheduled',
+              dateLabel: 'SCHEDULED',
+              nearestStation: '',
+              isLive: false
+            });
+          }
+        }
+      }
+
+      saveSchedule(schedule);
+
+      // Sort: live trains first (by arrival time), then scheduled (by arrival time)
+      liveTrains.sort((a, b) => {
+        if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
+        return a.arrivalDate - b.arrivalDate;
+      });
+
+      renderBoard(liveTrains);
+
+      // Update status
+      lastFetchTime = new Date();
+      $('lastUpdated').textContent = `LAST UPDATED ${formatTimeInTz(lastFetchTime, stationTz)}`;
+      dot.classList.remove('loading');
+
+    } catch (err) {
+      console.error('Fetch error:', err);
+      dot.classList.remove('loading');
+      showError(`Failed to fetch data: ${err.message}`);
+
+      // Try to render from schedule cache
+      const schedule = loadSchedule();
+      const cached = Object.entries(schedule).map(([num, sch]) => ({
+        trainNum: num,
+        route: sch.route,
+        dir: sch.dir,
+        arrivalTime: sch.schArr,
+        arrivalDate: parseScheduledTime(sch.schArr, stationTz),
+        status: 'SCHEDULED',
+        statusClass: 'scheduled',
+        dateLabel: 'CACHED',
+        nearestStation: '',
+        isLive: false
+      }));
+      cached.sort((a, b) => a.arrivalDate - b.arrivalDate);
+      if (cached.length) renderBoard(cached);
+      else $('boardBody').innerHTML = '<div class="empty-state">No schedule data yet. Waiting for first successful fetch…</div>';
+    }
+
+    // Schedule next refresh
+    clearTimers();
+    refreshTimer = setTimeout(fetchAndRender, REFRESH_MS);
+    startCountdown();
+  }
+
+  // ── Render ──
+  function renderBoard(trains) {
+    if (!trains.length) {
+      $('boardBody').innerHTML = '<div class="empty-state">No trains found. The schedule will build up over time as trains are observed.</div>';
+      return;
+    }
+
+    const hasStations = (t) => t.stations && t.stations.length > 0;
+
+    $('boardBody').innerHTML = trains.map((t, idx) => `
+      <div class="board-row ${t.statusClass}${hasStations(t) ? ' expandable' : ''}" ${hasStations(t) ? `data-detail="detail-${idx}"` : ''}>
+        <div class="train-num">${t.trainNum}</div>
+        <div>
+          <div class="route-name">${escHtml(t.route)}${t.runDay ? ` (${escHtml(t.runDay)})` : ''}</div>
+          ${t.nearestStation ? `<div class="route-nearest">${escHtml(t.nearestStation)}</div>` : ''}
+        </div>
+        <div class="direction col-dir">${escHtml(t.dir)}</div>
+        <div>
+          <div class="arrival-time">${escHtml(t.arrivalTime)}</div>
+          <div class="arrival-label">${escHtml(t.dateLabel)}</div>
+        </div>
+        <div><span class="status-badge ${t.statusClass}">${escHtml(t.status)}</span></div>
+      </div>
+      ${hasStations(t) ? `<div class="detail-panel" id="detail-${idx}">${renderDetailPanel(t)}</div>` : ''}
+    `).join('');
+
+    // Attach click handlers
+    $('boardBody').querySelectorAll('.board-row.expandable').forEach(row => {
+      row.addEventListener('click', () => {
+        const panelId = row.getAttribute('data-detail');
+        const panel = document.getElementById(panelId);
+        if (panel) panel.classList.toggle('open');
+      });
+    });
+  }
+
+  function renderDetailPanel(t) {
+    const stops = t.stations;
+    let html = '<div class="detail-inner">';
+    html += '<div class="detail-heading"><span>Station-by-station status</span><span>' + escHtml(t.route) + '</span></div>';
+    html += '<div class="detail-stops">';
+    html += `<div class="detail-stop" style="border-left-color:transparent;opacity:0.5;font-size:0.6rem;letter-spacing:1px;text-transform:uppercase;padding-bottom:2px;">
+      <span></span><span>Station</span><span>Sched</span><span>Est</span><span class="detail-stop-delta">+/-</span>
+    </div>`;
+
+    for (const stop of stops) {
+      let cls = 'enroute';
+      if (stop.status === 'Departed') cls = 'departed';
+      else if (stop.status === 'Station') cls = 'current';
+      if (stop.code === stationCode) cls += ' this-station';
+
+      const tz = stop.tz || stationTz;
+      const schArr = stop.schArr ? new Date(stop.schArr) : null;
+      const estArr = stop.arr ? new Date(stop.arr) : null;
+      const schTimeStr = schArr ? formatTimeInTz(schArr, tz) : '—';
+      const estTimeStr = estArr ? formatTimeInTz(estArr, tz) : '—';
+
+      // Delta based on schedule vs estimate
+      let diffMin = 0;
+      let deltaHtml = '';
+      if (schArr && estArr) {
+        diffMin = Math.round((estArr - schArr) / 60000);
+        if (diffMin > 0) deltaHtml = `<span class="detail-stop-late">+${diffMin}m</span>`;
+        else if (diffMin < 0) deltaHtml = `<span class="detail-stop-early">${diffMin}m</span>`;
+        else deltaHtml = `<span class="detail-stop-ontime">OT</span>`;
+      }
+
+      html += `<div class="detail-stop ${cls}">
+        <span></span>
+        <span class="detail-stop-name">${escHtml(stop.name)}<span class="detail-stop-code">${escHtml(stop.code)}</span></span>
+        <span>${schTimeStr}</span>
+        <span>${estTimeStr}</span>
+        <span class="detail-stop-delta">${deltaHtml}</span>
+      </div>`;
+    }
+
+    html += '</div></div>';
+    return html;
+  }
+
+  // ── Helpers ──
+  function formatTimeInTz(date, tz) {
+    try {
+      return date.toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz
+      });
+    } catch {
+      return date.toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', hour12: true
+      });
+    }
+  }
+
+  function getDateLabel(date, tz) {
+    if (!date) return '';
+    const now = new Date();
+    try {
+      const dayNow = now.toLocaleDateString('en-US', { timeZone: tz });
+      const dayArr = date.toLocaleDateString('en-US', { timeZone: tz });
+      if (dayNow === dayArr) return 'TODAY';
+      // Check tomorrow
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const dayTom = tomorrow.toLocaleDateString('en-US', { timeZone: tz });
+      if (dayTom === dayArr) return 'TOMORROW';
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: tz }).toUpperCase();
+    } catch {
+      return 'TODAY';
+    }
+  }
+
+  function parseScheduledTime(timeStr, tz) {
+    // Parse a time string like "11:26 AM" into a Date for today in the station's timezone
+    const now = new Date();
+    const [time, period] = timeStr.split(' ');
+    const [h, m] = time.split(':').map(Number);
+    let hour = h;
+    if (period === 'PM' && hour !== 12) hour += 12;
+    if (period === 'AM' && hour === 12) hour = 0;
+    const d = new Date(now);
+    d.setHours(hour, m, 0, 0);
+    return d;
+  }
+
+  function escHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Start ──
+  init();
+})();
+</script>
+</body>
+</html>
