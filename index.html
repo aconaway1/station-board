@@ -805,15 +805,17 @@
         if (!trainNums.includes(num)) {
           const sch = schedule[num];
           if (sch && sch.schArr) {
+            const parsedArr = parseScheduledTime(sch.schArr, stationTz);
+            const now = new Date();
             liveTrains.push({
               trainNum: num,
               route: sch.route,
               dir: sch.dir,
               arrivalTime: sch.schArr,
-              arrivalDate: parseScheduledTime(sch.schArr, stationTz),
+              arrivalDate: parsedArr,
               status: 'SCHEDULED',
               statusClass: 'scheduled',
-              dateLabel: 'SCHEDULED',
+              dateLabel: parsedArr.getDate() !== now.getDate() ? 'TOMORROW' : 'SCHEDULED',
               nearestStation: '',
               isLive: false
             });
@@ -823,11 +825,8 @@
 
       saveSchedule(schedule);
 
-      // Sort: live trains first (by arrival time), then scheduled (by arrival time)
-      liveTrains.sort((a, b) => {
-        if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
-        return a.arrivalDate - b.arrivalDate;
-      });
+      // Sort all trains by next arrival time, regardless of live/scheduled status
+      liveTrains.sort((a, b) => a.arrivalDate - b.arrivalDate);
 
       renderBoard(liveTrains);
 
@@ -987,6 +986,7 @@
     if (period === 'AM' && hour === 12) hour = 0;
     const d = new Date(now);
     d.setHours(hour, m, 0, 0);
+    if (d < now) d.setDate(d.getDate() + 1);
     return d;
   }
 

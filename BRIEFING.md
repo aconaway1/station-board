@@ -249,7 +249,7 @@ These were discussed and are planned for future iterations:
 ## Project Structure (recommended)
 
 ```
-gbb-arrivals/
+station-board/
 ├── index.html        # main app (single file, self-contained)
 ├── README.md         # what it is, how to use it, how to change stations
 ├── BRIEFING.md       # this file
