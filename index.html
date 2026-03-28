@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -238,6 +240,27 @@
   .board-row.late { border-left-color: var(--red); }
   .board-row.early { border-left-color: var(--blue); }
   .board-row.scheduled { border-left-color: var(--muted); }
+  .board-row.arriving-soon {
+    background: rgba(245,166,35,0.08);
+    animation: arrival-pulse 2s ease-in-out infinite;
+  }
+  @keyframes arrival-pulse {
+    0%, 100% { background: rgba(245,166,35,0.08); }
+    50% { background: rgba(245,166,35,0.18); }
+  }
+  .railcam-link {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--red);
+    text-decoration: none;
+    letter-spacing: 0.5px;
+    animation: railcam-blink 1.5s ease-in-out infinite;
+  }
+  .railcam-link:hover { text-decoration: underline; }
+  @keyframes railcam-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
 
   .train-num {
     font-family: var(--font-display);
@@ -424,6 +447,61 @@
     display: none;
   }
 
+  /* ── Map modal ── */
+  .map-btn {
+    background: rgba(245,166,35,0.15);
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+  .map-btn:hover { background: rgba(245,166,35,0.3); }
+
+  .map-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.8);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .map-modal {
+    background: var(--panel);
+    border: 1px solid rgba(245,166,35,0.3);
+    border-radius: 8px;
+    width: 90vw;
+    max-width: 700px;
+    overflow: hidden;
+  }
+  .map-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    font-family: var(--font-mono);
+    color: var(--amber);
+    font-size: 0.85rem;
+  }
+  .map-modal-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 1.2rem;
+    cursor: pointer;
+  }
+  .map-modal-close:hover { color: var(--text); }
+  #mapContainer {
+    width: 100%;
+    height: 50vh;
+    max-height: 500px;
+  }
+
   /* ── Responsive ── */
   @media (max-width: 700px) {
     .board-header, .board-row {
@@ -492,6 +570,17 @@
   </div>
 </div>
 
+<!-- Map modal -->
+<div class="map-overlay" id="mapOverlay" style="display:none">
+  <div class="map-modal">
+    <div class="map-modal-header">
+      <span id="mapTitle">TRAIN MAP</span>
+      <button class="map-modal-close" id="mapClose">&times;</button>
+    </div>
+    <div id="mapContainer"></div>
+  </div>
+</div>
+
 <script>
 (function () {
   'use strict';
@@ -501,6 +590,9 @@
 
   let stationCode = localStorage.getItem('amtrak_station') || 'GBB';
   let stationTz = 'America/Chicago';
+  let stationLat = null;
+  let stationLon = null;
+  let railcamUrl = null;
   let lastFetchTime = null;
   let refreshTimer = null;
   let countdownTimer = null;
@@ -528,6 +620,7 @@
     const code = $('stationInput').value.trim().toUpperCase();
     if (!code || code.length < 2 || code.length > 4) return;
     stationCode = code;
+    railcamUrl = null;
     localStorage.setItem('amtrak_station', code);
     $('stationName').textContent = 'LOADING…';
     $('stationMeta').textContent = '';
@@ -619,6 +712,60 @@
     localStorage.setItem(getScheduleKey(), JSON.stringify(schedule));
   }
 
+  // ── Railcam search ──
+  function getRailcamKey() { return `amtrak_railcam_${stationCode}`; }
+
+  function loadRailcam() {
+    try {
+      const cached = JSON.parse(localStorage.getItem(getRailcamKey()));
+      if (cached && cached.url && (Date.now() - cached.ts) < 7 * 24 * 60 * 60 * 1000) return cached.url;
+    } catch {}
+    return null;
+  }
+
+  function saveRailcam(url) {
+    localStorage.setItem(getRailcamKey(), JSON.stringify({ url, ts: Date.now() }));
+  }
+
+  const PIPED_INSTANCES = [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.adminforge.de',
+    'https://api.piped.yt'
+  ];
+
+  async function searchRailcam(stationName) {
+    // Check cache first (valid for 7 days)
+    const cached = loadRailcam();
+    if (cached) { railcamUrl = cached; return; }
+
+    const query = encodeURIComponent(`${stationName} railcam live`);
+
+    // Try each Piped instance
+    for (const instance of PIPED_INSTANCES) {
+      try {
+        const resp = await fetch(`${instance}/search?q=${query}&filter=all`);
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        const items = data.items || data;
+        if (!items || !items.length) continue;
+        const live = items.find(v => v.isShort === false && v.duration === -1);
+        const railcam = items.find(v => v.title && /railcam|rail cam|train cam/i.test(v.title));
+        const best = live || railcam || items[0];
+        if (best && best.url) {
+          const ytUrl = `https://www.youtube.com${best.url}`;
+          railcamUrl = ytUrl;
+          saveRailcam(ytUrl);
+          return;
+        }
+      } catch {}
+    }
+
+    // Fallback: direct YouTube search link
+    const fallback = `https://www.youtube.com/results?search_query=${query}`;
+    railcamUrl = fallback;
+    saveRailcam(fallback);
+  }
+
   // ── API calls ──
   async function fetchStation() {
     const resp = await fetch(`${API_BASE}/stations/${stationCode}`);
@@ -657,12 +804,17 @@
 
       // Update header
       stationTz = stationData.tz || 'America/Chicago';
+      stationLat = stationData.lat;
+      stationLon = stationData.lon;
       $('stationName').textContent = (stationData.name || stationCode).toUpperCase();
       const metaParts = [stationData.code];
       if (stationData.address1 && stationData.address1.trim()) metaParts.push(stationData.address1.trim());
       if (stationData.city) metaParts.push(`${stationData.city}, ${stationData.state || ''}`);
       $('stationMeta').textContent = metaParts.join(' · ');
       document.title = `${stationData.name || stationCode} — Amtrak Arrivals`;
+
+      // Search for railcam (non-blocking)
+      searchRailcam(stationData.name || stationCode);
 
       // 2. Extract unique train numbers from run IDs
       const runIds = stationData.trains || [];
@@ -681,20 +833,24 @@
         const runs = trainResults[i];
         if (!runs || runs.length === 0) continue;
 
-        // Find the best run: first one where this station is Enroute or Station
+        // Find the best run: the one arriving soonest where this station is Enroute or Station
         let bestRun = null;
         let bestStop = null;
+        let bestArrival = Infinity;
 
         for (const run of runs) {
           const stations = run.stations || [];
           for (const stop of stations) {
             if (stop.code === stationCode && (stop.status === 'Enroute' || stop.status === 'Station')) {
-              bestRun = run;
-              bestStop = stop;
+              const arrTime = stop.arr ? new Date(stop.arr).getTime() : Infinity;
+              if (arrTime < bestArrival) {
+                bestRun = run;
+                bestStop = stop;
+                bestArrival = arrTime;
+              }
               break;
             }
           }
-          if (bestRun) break;
         }
 
         // If no enroute/station stop, check for departed (use first run to learn schedule)
@@ -778,7 +934,11 @@
             dateLabel,
             nearestStation,
             isLive: true,
-            stations: bestRun.stations || []
+            stations: bestRun.stations || [],
+            trainLat: bestRun.lat,
+            trainLon: bestRun.lon,
+            heading: bestRun.heading,
+            velocity: bestRun.velocity
           });
         } else {
           // Not active or already departed — show scheduled time
@@ -829,6 +989,7 @@
       liveTrains.sort((a, b) => a.arrivalDate - b.arrivalDate);
 
       renderBoard(liveTrains);
+      updateOpenMap(liveTrains);
 
       // Update status
       lastFetchTime = new Date();
@@ -873,30 +1034,46 @@
     }
 
     const hasStations = (t) => t.stations && t.stations.length > 0;
+    const isArrivingSoon = (t) => t.isLive && t.arrivalDate && (t.arrivalDate - new Date()) > 0 && (t.arrivalDate - new Date()) <= 10 * 60 * 1000;
 
     $('boardBody').innerHTML = trains.map((t, idx) => `
-      <div class="board-row ${t.statusClass}${hasStations(t) ? ' expandable' : ''}" ${hasStations(t) ? `data-detail="detail-${idx}"` : ''}>
+      <div class="board-row ${t.statusClass}${hasStations(t) ? ' expandable' : ''}${isArrivingSoon(t) ? ' arriving-soon' : ''}" ${hasStations(t) ? `data-detail="detail-${idx}"` : ''}>
         <div class="train-num">${t.trainNum}</div>
         <div>
           <div class="route-name">${escHtml(t.route)}${t.runDay ? ` (${escHtml(t.runDay)})` : ''}</div>
           ${t.nearestStation ? `<div class="route-nearest">${escHtml(t.nearestStation)}</div>` : ''}
+          ${isArrivingSoon(t) && railcamUrl ? `<a class="railcam-link" href="${railcamUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()">WATCH RAILCAM</a>` : ''}
         </div>
         <div class="direction col-dir">${escHtml(t.dir)}</div>
         <div>
           <div class="arrival-time">${escHtml(t.arrivalTime)}</div>
           <div class="arrival-label">${escHtml(t.dateLabel)}</div>
         </div>
-        <div><span class="status-badge ${t.statusClass}">${escHtml(t.status)}</span></div>
+        <div>
+          <span class="status-badge ${t.statusClass}">${escHtml(t.status)}</span>
+          ${t.trainLat != null ? `<button class="map-btn" data-map-idx="${idx}">MAP</button>` : ''}
+        </div>
       </div>
       ${hasStations(t) ? `<div class="detail-panel" id="detail-${idx}">${renderDetailPanel(t)}</div>` : ''}
     `).join('');
 
-    // Attach click handlers
+    // Attach click handlers for expandable rows
     $('boardBody').querySelectorAll('.board-row.expandable').forEach(row => {
-      row.addEventListener('click', () => {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.map-btn')) return;
         const panelId = row.getAttribute('data-detail');
         const panel = document.getElementById(panelId);
         if (panel) panel.classList.toggle('open');
+      });
+    });
+
+    // Attach click handlers for map buttons
+    $('boardBody').querySelectorAll('.map-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.getAttribute('data-map-idx'));
+        const t = trains[idx];
+        if (t && t.trainLat != null) showTrainMap(t);
       });
     });
   }
@@ -944,6 +1121,90 @@
     html += '</div></div>';
     return html;
   }
+
+  // ── Map ──
+  let mapInstance = null;
+  let mapTrainNum = null;
+  let mapTrainMarker = null;
+
+  function showTrainMap(t) {
+    const overlay = $('mapOverlay');
+    overlay.style.display = 'flex';
+    $('mapTitle').textContent = `TRAIN ${t.trainNum} — ${t.route}`;
+    mapTrainNum = t.trainNum;
+
+    // Destroy previous map if any
+    if (mapInstance) { mapInstance.remove(); mapInstance = null; }
+
+    mapInstance = L.map('mapContainer', { zoomControl: true });
+
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Esri, Maxar, Earthstar Geographics',
+      maxZoom: 18
+    }).addTo(mapInstance);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 18
+    }).addTo(mapInstance);
+
+    const trainIcon = L.divIcon({
+      className: '',
+      html: `<div style="background:var(--amber);color:#000;font-family:var(--font-display);font-size:14px;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(0,0,0,0.3);box-shadow:0 2px 6px rgba(0,0,0,0.4);">${t.trainNum}</div>`,
+      iconSize: [36, 36],
+      iconAnchor: [18, 18]
+    });
+
+    const stationIcon = L.divIcon({
+      className: '',
+      html: `<div style="background:var(--green);color:#000;font-family:var(--font-mono);font-size:10px;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(0,0,0,0.3);box-shadow:0 2px 6px rgba(0,0,0,0.4);">${stationCode}</div>`,
+      iconSize: [36, 36],
+      iconAnchor: [18, 18]
+    });
+
+    mapTrainMarker = L.marker([t.trainLat, t.trainLon], { icon: trainIcon }).addTo(mapInstance);
+    L.marker([stationLat, stationLon], { icon: stationIcon }).addTo(mapInstance);
+
+    updateTrainPopup(mapTrainMarker, t);
+
+    const bounds = L.latLngBounds([
+      [t.trainLat, t.trainLon],
+      [stationLat, stationLon]
+    ]);
+    mapInstance.fitBounds(bounds, { padding: [50, 50] });
+  }
+
+  function updateTrainPopup(marker, t) {
+    let popup = `Train ${t.trainNum}`;
+    if (t.heading) popup += ` · Heading ${t.heading}`;
+    if (t.velocity != null) popup += ` · ${Math.round(t.velocity)} mph`;
+    marker.bindPopup(popup);
+  }
+
+  function updateOpenMap(trains) {
+    if (!mapInstance || !mapTrainNum || $('mapOverlay').style.display === 'none') return;
+    const t = trains.find(tr => tr.trainNum === mapTrainNum && tr.trainLat != null);
+    if (!t) return;
+    mapTrainMarker.setLatLng([t.trainLat, t.trainLon]);
+    updateTrainPopup(mapTrainMarker, t);
+    $('mapTitle').textContent = `TRAIN ${t.trainNum} — ${t.route}`;
+    const bounds = L.latLngBounds([
+      [t.trainLat, t.trainLon],
+      [stationLat, stationLon]
+    ]);
+    mapInstance.fitBounds(bounds, { padding: [50, 50] });
+  }
+
+  function closeMap() {
+    $('mapOverlay').style.display = 'none';
+    mapTrainNum = null;
+    mapTrainMarker = null;
+    if (mapInstance) { mapInstance.remove(); mapInstance = null; }
+  }
+
+  $('mapClose').addEventListener('click', closeMap);
+
+  $('mapOverlay').addEventListener('click', (e) => {
+    if (e.target === $('mapOverlay')) closeMap();
+  });
 
   // ── Helpers ──
   function formatTimeInTz(date, tz) {
