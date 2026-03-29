@@ -7,8 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Leaflet loaded on demand by app.js -->
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -562,6 +561,24 @@
     margin-bottom: 12px;
     display: none;
   }
+  .suggestion-btn {
+    background: rgba(245,166,35,0.15);
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    padding: 3px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    margin: 4px 4px 0 0;
+  }
+  .suggestion-btn:hover { background: rgba(245,166,35,0.3); }
+  .suggestion-label {
+    color: var(--muted);
+    font-size: 0.7rem;
+    margin-top: 6px;
+    display: block;
+  }
 
   /* ── Map modal ── */
   .map-btn {
@@ -728,28 +745,140 @@
   'use strict';
 
   const API_BASE = 'https://api-v3.amtraker.com/v3';
-  const REFRESH_MS = 10 * 60 * 1000; // 10 minutes
+  const REFRESH_MS = 10 * 60 * 1000;
+  const RERENDER_MS = 30000;
+  const ARRIVING_SOON_MS = 10 * 60 * 1000;
 
-  let stationCode = localStorage.getItem('amtrak_station') || 'GBB';
-  let stationTz = 'America/Chicago';
-  let stationLat = null;
-  let stationLon = null;
+  // ── Grouped state ──
+  const station = {
+    code: localStorage.getItem('amtrak_station') || 'GBB',
+    tz: 'America/Chicago',
+    lat: null,
+    lon: null,
+    name: ''
+  };
+
+  const timers = {
+    refresh: null,
+    countdown: null,
+    rerender: null,
+    deadline: null
+  };
+
+  const mapState = {
+    instance: null,
+    mode: null,       // 'train' | 'station'
+    trainNum: null,
+    markers: {},
+    leafletLoaded: false
+  };
+
   let railcamUrl = null;
   let lastFetchTime = null;
-  let refreshTimer = null;
-  let countdownTimer = null;
-  let refreshDeadline = null;
-  let rerenderTimer = null;
   let lastTrainData = null;
+  let fetchController = null;
+  let isFetching = false;
 
   const $ = (id) => document.getElementById(id);
 
+  // ── Helpers ──
+  function escHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function formatTimeInTz(date, tz) {
+    try {
+      return date.toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz
+      });
+    } catch {
+      return date.toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', hour12: true
+      });
+    }
+  }
+
+  function formatDelta(minutes) {
+    if (minutes < 60) return `${minutes} MIN`;
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m === 0 ? `${h} HR` : `${h} HR ${m} MIN`;
+  }
+
+  function computeDelay(estArr, schArr) {
+    if (!estArr || !schArr) return { diffMin: 0, statusText: 'ON TIME', statusClass: 'on-time' };
+    const diffMin = Math.round((estArr - schArr) / 60000);
+    if (diffMin > 0) return { diffMin, statusText: `${formatDelta(diffMin)} LATE`, statusClass: 'late' };
+    if (diffMin < 0) return { diffMin, statusText: `${formatDelta(Math.abs(diffMin))} EARLY`, statusClass: 'early' };
+    return { diffMin: 0, statusText: 'ON TIME', statusClass: 'on-time' };
+  }
+
+  function getDateLabel(date, tz) {
+    if (!date) return '';
+    const now = new Date();
+    try {
+      const dayNow = now.toLocaleDateString('en-US', { timeZone: tz });
+      const dayArr = date.toLocaleDateString('en-US', { timeZone: tz });
+      if (dayNow === dayArr) return 'TODAY';
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const dayTom = tomorrow.toLocaleDateString('en-US', { timeZone: tz });
+      if (dayTom === dayArr) return 'TOMORROW';
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: tz }).toUpperCase();
+    } catch {
+      return 'TODAY';
+    }
+  }
+
+  function parseScheduledTime(timeStr, tz) {
+    // Build a date for the given time in the station's timezone
+    const now = new Date();
+    const [time, period] = timeStr.split(' ');
+    const [h, m] = time.split(':').map(Number);
+    let hour = h;
+    if (period === 'PM' && hour !== 12) hour += 12;
+    if (period === 'AM' && hour === 12) hour = 0;
+
+    // Format today's date in the station's timezone, then build an ISO string
+    try {
+      const dateStr = now.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+      const pad = (n) => String(n).padStart(2, '0');
+      // Get the station's UTC offset by comparing formatted times
+      const probe = new Date(`${dateStr}T${pad(hour)}:${pad(m)}:00`);
+      const stationTimeStr = probe.toLocaleString('en-US', { timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      // Parse the station-local formatted time back
+      const [datePart, timePart] = stationTimeStr.split(', ');
+      const [mo, dy, yr] = datePart.split('/');
+      const [hh, mm, ss] = timePart.split(':');
+      const localInTz = new Date(Date.UTC(+yr, +mo - 1, +dy, +hh, +mm, +ss));
+      // The offset is the difference between UTC interpretation and actual UTC
+      const offset = localInTz - probe;
+      const d = new Date(probe.getTime() + offset);
+      // If this time has already passed in the station's timezone, bump to tomorrow
+      const nowInTzStr = now.toLocaleString('en-US', { timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      if (d < now) d.setDate(d.getDate() + 1);
+      return d;
+    } catch {
+      // Fallback: use browser local time (original behavior)
+      const d = new Date(now);
+      d.setHours(hour, m, 0, 0);
+      if (d < now) d.setDate(d.getDate() + 1);
+      return d;
+    }
+  }
+
+  function isArrivingSoon(t) {
+    return t.isLive && t.arrivalDate && (t.arrivalDate - new Date()) > 0 && (t.arrivalDate - new Date()) <= ARRIVING_SOON_MS;
+  }
+
   // ── Init ──
   function init() {
-    $('stationInput').value = stationCode;
+    $('stationInput').value = station.code;
     startClock();
     fetchAndRender();
     setupStationSwitcher();
+    loadStationDirectory(); // pre-load for suggestions
   }
 
   // ── Station switcher ──
@@ -763,14 +892,16 @@
   function switchStation() {
     const code = $('stationInput').value.trim().toUpperCase();
     if (!code || code.length < 2 || code.length > 4) return;
-    stationCode = code;
+    if (code === station.code && !isFetching) { /* same station, allow re-fetch */ }
+    station.code = code;
     railcamUrl = null;
     localStorage.setItem('amtrak_station', code);
     $('stationName').textContent = 'LOADING…';
     $('stationMeta').textContent = '';
     showSkeleton();
     hideError();
-    clearTimers();
+    closeMap();
+    clearAllTimers();
     fetchAndRender();
   }
 
@@ -781,11 +912,11 @@
       try {
         $('clock').textContent = now.toLocaleTimeString('en-US', {
           hour: '2-digit', minute: '2-digit', second: '2-digit',
-          hour12: true, timeZone: stationTz
+          hour12: true, timeZone: station.tz
         });
         $('clockDate').textContent = now.toLocaleDateString('en-US', {
           weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-          timeZone: stationTz
+          timeZone: station.tz
         });
       } catch {
         $('clock').textContent = now.toLocaleTimeString('en-US', {
@@ -800,37 +931,36 @@
     setInterval(tick, 1000);
   }
 
-  // ── Countdown & progress ──
+  // ── Timers ──
   function startCountdown() {
-    refreshDeadline = Date.now() + REFRESH_MS;
-    clearInterval(countdownTimer);
-    countdownTimer = setInterval(() => {
-      const remaining = Math.max(0, refreshDeadline - Date.now());
+    timers.deadline = Date.now() + REFRESH_MS;
+    clearInterval(timers.countdown);
+    timers.countdown = setInterval(() => {
+      const remaining = Math.max(0, timers.deadline - Date.now());
       const mins = Math.floor(remaining / 60000);
       const secs = Math.floor((remaining % 60000) / 1000);
       $('nextRefresh').textContent = `NEXT REFRESH IN ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
-      const pct = (remaining / REFRESH_MS) * 100;
-      $('progressFill').style.width = pct + '%';
+      $('progressFill').style.width = ((remaining / REFRESH_MS) * 100) + '%';
     }, 1000);
   }
 
-  function clearTimers() {
-    clearTimeout(refreshTimer);
-    clearInterval(countdownTimer);
-    clearInterval(rerenderTimer);
-  }
-
   function startRerender() {
-    clearInterval(rerenderTimer);
-    rerenderTimer = setInterval(() => {
+    clearInterval(timers.rerender);
+    timers.rerender = setInterval(() => {
       if (lastTrainData) renderBoard(lastTrainData);
-    }, 30000);
+    }, RERENDER_MS);
   }
 
-  // ── Error handling ──
+  function clearAllTimers() {
+    clearTimeout(timers.refresh);
+    clearInterval(timers.countdown);
+    clearInterval(timers.rerender);
+  }
+
+  // ── Error / Skeleton ──
   function showError(msg) {
     const el = $('errorBanner');
-    el.textContent = msg;
+    el.innerHTML = escHtml(msg);
     el.style.display = 'block';
   }
 
@@ -838,7 +968,6 @@
     $('errorBanner').style.display = 'none';
   }
 
-  // ── Skeleton ──
   function showSkeleton() {
     let html = '';
     for (let i = 0; i < 4; i++) {
@@ -848,14 +977,13 @@
   }
 
   // ── localStorage schedule ──
-  function getScheduleKey() {
-    return `amtrak_schedule_${stationCode}`;
-  }
+  function getScheduleKey() { return `amtrak_schedule_${station.code}`; }
 
   function loadSchedule() {
     try {
       return JSON.parse(localStorage.getItem(getScheduleKey())) || {};
-    } catch {
+    } catch (e) {
+      console.warn('Failed to load schedule from localStorage:', e);
       return {};
     }
   }
@@ -865,14 +993,15 @@
   }
 
   // ── Railcam ──
-  function getRailcamKey() { return `amtrak_railcam_${stationCode}`; }
-  let stationNameForRailcam = '';
+  function getRailcamKey() { return `amtrak_railcam_${station.code}`; }
 
   function loadRailcam() {
     try {
       const cached = JSON.parse(localStorage.getItem(getRailcamKey()));
       if (cached && cached.url) return cached.url;
-    } catch {}
+    } catch (e) {
+      console.warn('Failed to load railcam from localStorage:', e);
+    }
     return null;
   }
 
@@ -881,14 +1010,10 @@
   }
 
   function initRailcam(stationName) {
-    stationNameForRailcam = stationName;
+    station.name = stationName;
     const cached = loadRailcam();
     if (cached) { railcamUrl = cached; }
     updateRailcamStatus();
-  }
-
-  function isYouTubeUrl(str) {
-    return /^https?:\/\/(www\.)?(youtube\.com\/watch\?|youtu\.be\/|youtube\.com\/live\/)/.test(str);
   }
 
   function updateRailcamStatus() {
@@ -916,13 +1041,13 @@
   }
 
   $('railcamYtBtn').addEventListener('click', () => {
-    const query = encodeURIComponent(`${stationNameForRailcam || stationCode} railcam live`);
+    const query = encodeURIComponent(`${station.name || station.code} railcam live`);
     window.open(`https://www.youtube.com/results?search_query=${query}`, '_blank');
   });
 
   $('railcamSaveBtn').addEventListener('click', () => {
     const url = $('railcamUrlInput').value.trim();
-    if (!isYouTubeUrl(url)) {
+    if (!/^https?:\/\/(www\.)?(youtube\.com\/watch\?|youtu\.be\/|youtube\.com\/live\/)/.test(url)) {
       $('railcamError').style.display = 'block';
       return;
     }
@@ -943,22 +1068,87 @@
     if (e.target === $('railcamOverlay')) closeRailcamPicker();
   });
 
-  // ── API calls ──
-  async function fetchStation() {
-    const resp = await fetch(`${API_BASE}/stations/${stationCode}`);
-    if (!resp.ok) throw new Error(`Station API returned ${resp.status}`);
-    const data = await resp.json();
-    return data[stationCode] || data[Object.keys(data)[0]];
+  // ── Station directory (for suggestions) ──
+  let stationDirectory = null; // [{code, name}, ...]
+
+  async function loadStationDirectory() {
+    if (stationDirectory) return stationDirectory;
+    try {
+      const resp = await fetch(`${API_BASE}/stations`);
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      stationDirectory = Object.values(data).filter(s => s.code).map(s => ({ code: s.code, name: s.name || s.code }));
+      return stationDirectory;
+    } catch {
+      return null;
+    }
   }
 
-  async function fetchTrain(num) {
-    const resp = await fetch(`${API_BASE}/trains/${num}`);
+  function levenshtein(a, b) {
+    const m = a.length, n = b.length;
+    const dp = Array.from({ length: m + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = a[i-1] === b[j-1]
+          ? dp[i-1][j-1]
+          : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+      }
+    }
+    return dp[m][n];
+  }
+
+  function findSuggestions(code) {
+    if (!stationDirectory) return [];
+    const upper = code.toUpperCase();
+    // Score by: prefix match, then substring match, then Levenshtein distance
+    const scored = stationDirectory.map(s => {
+      let score = levenshtein(upper, s.code);
+      if (s.code.startsWith(upper)) score -= 3;
+      else if (s.code.includes(upper) || upper.includes(s.code)) score -= 1;
+      // Also check name match
+      if (s.name && s.name.toUpperCase().startsWith(upper)) score -= 2;
+      return { ...s, score };
+    });
+    scored.sort((a, b) => a.score - b.score);
+    return scored.slice(0, 5);
+  }
+
+  async function showStationSuggestions(badCode) {
+    await loadStationDirectory();
+    const suggestions = findSuggestions(badCode);
+    if (!suggestions.length) return;
+
+    const banner = $('errorBanner');
+    let html = banner.innerHTML;
+    html += '<span class="suggestion-label">Did you mean:</span>';
+    for (const s of suggestions) {
+      html += ` <button class="suggestion-btn" data-code="${escHtml(s.code)}">${escHtml(s.code)} — ${escHtml(s.name)}</button>`;
+    }
+    banner.innerHTML = html;
+
+    banner.querySelectorAll('.suggestion-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const code = btn.getAttribute('data-code');
+        $('stationInput').value = code;
+        switchStation();
+      });
+    });
+  }
+
+  // ── API calls ──
+  async function fetchStation(signal) {
+    const resp = await fetch(`${API_BASE}/stations/${station.code}`, { signal });
+    if (!resp.ok) throw new Error(`Station API returned ${resp.status}`);
+    const data = await resp.json();
+    return data[station.code] || data[Object.keys(data)[0]];
+  }
+
+  async function fetchTrain(num, signal) {
+    const resp = await fetch(`${API_BASE}/trains/${num}`, { signal });
     if (!resp.ok) return null;
     const data = await resp.json();
-    // API returns an object with trainNum keys, each containing an array of runs
-    // or it may return an array directly — handle both
     if (Array.isArray(data)) return data;
-    // Object format: { "4": [ {...}, {...} ] } — flatten all runs
     const runs = [];
     for (const key of Object.keys(data)) {
       const val = data[key];
@@ -968,240 +1158,221 @@
     return runs.length ? runs : null;
   }
 
+  // ── Data processing (extracted from fetchAndRender) ──
+  function findBestRun(runs) {
+    let bestRun = null, bestStop = null, bestArrival = Infinity;
+    for (const run of runs) {
+      for (const stop of (run.stations || [])) {
+        if (stop.code === station.code && (stop.status === 'Enroute' || stop.status === 'Station')) {
+          const arrTime = stop.arr ? new Date(stop.arr).getTime() : Infinity;
+          if (arrTime < bestArrival) {
+            bestRun = run;
+            bestStop = stop;
+            bestArrival = arrTime;
+          }
+          break;
+        }
+      }
+    }
+    return { bestRun, bestStop };
+  }
+
+  function findDepartedRun(runs) {
+    for (const run of runs) {
+      for (const stop of (run.stations || [])) {
+        if (stop.code === station.code && stop.status === 'Departed') {
+          return { departedRun: run, departedStop: stop };
+        }
+      }
+    }
+    return { departedRun: null, departedStop: null };
+  }
+
+  function upsertSchedule(schedule, num, refRun, refStop, today) {
+    const schArrDate = refStop.schArr ? new Date(refStop.schArr) : null;
+    const schDepDate = refStop.schDep ? new Date(refStop.schDep) : null;
+    schedule[num] = {
+      schArr: schArrDate ? formatTimeInTz(schArrDate, station.tz) : (schedule[num]?.schArr || ''),
+      schDep: schDepDate ? formatTimeInTz(schDepDate, station.tz) : (schedule[num]?.schDep || ''),
+      route: refRun.routeName || schedule[num]?.route || '',
+      dir: `→ ${refRun.destName || ''}`,
+      destCode: refRun.destCode || '',
+      destName: refRun.destName || '',
+      origCode: refRun.origCode || '',
+      origName: refRun.origName || '',
+      firstSeen: schedule[num]?.firstSeen || today,
+      lastSeen: today
+    };
+  }
+
+  function buildLiveTrainRow(num, bestRun, bestStop, schedule) {
+    const estArr = bestStop.arr ? new Date(bestStop.arr) : null;
+    const schArr = bestStop.schArr ? new Date(bestStop.schArr) : null;
+    const { statusText, statusClass } = computeDelay(estArr, schArr);
+    const runDay = bestRun.trainID ? bestRun.trainID.split('-').slice(1).join('-') : '';
+    return {
+      trainNum: num,
+      route: bestRun.routeName || schedule[num]?.route || '',
+      runDay,
+      dir: `→ ${bestRun.destName || ''}`,
+      arrivalTime: estArr ? formatTimeInTz(estArr, station.tz) : (schedule[num]?.schArr || '—'),
+      arrivalDate: estArr || new Date(),
+      status: statusText,
+      statusClass,
+      dateLabel: getDateLabel(estArr, station.tz),
+      nearestStation: bestRun.eventName ? `NR: ${bestRun.eventName}` : '',
+      isLive: true,
+      stations: bestRun.stations || [],
+      trainLat: bestRun.lat,
+      trainLon: bestRun.lon,
+      heading: bestRun.heading,
+      velocity: bestRun.velocity
+    };
+  }
+
+  function buildScheduledTrainRow(num, sch, dateLabel) {
+    let arrivalDate = parseScheduledTime(sch.schArr, station.tz);
+    // If label says TOMORROW but parseScheduledTime returned today, force it to tomorrow
+    if (dateLabel === 'TOMORROW') {
+      const now = new Date();
+      const todayStr = now.toLocaleDateString('en-US', { timeZone: station.tz });
+      const arrStr = arrivalDate.toLocaleDateString('en-US', { timeZone: station.tz });
+      if (todayStr === arrStr) {
+        arrivalDate = new Date(arrivalDate.getTime() + 24 * 60 * 60 * 1000);
+      }
+    }
+    return {
+      trainNum: num,
+      route: sch.route,
+      dir: sch.dir,
+      arrivalTime: sch.schArr,
+      arrivalDate,
+      status: 'SCHEDULED',
+      statusClass: 'scheduled',
+      dateLabel,
+      nearestStation: '',
+      isLive: false
+    };
+  }
+
+  function processTrainData(trainNums, trainResults) {
+    const schedule = loadSchedule();
+    const today = new Date().toISOString().slice(0, 10);
+    const displayRows = [];
+
+    for (let i = 0; i < trainNums.length; i++) {
+      const num = trainNums[i];
+      const runs = trainResults[i];
+      if (!runs || runs.length === 0) continue;
+
+      const { bestRun, bestStop } = findBestRun(runs);
+      const { departedRun, departedStop } = bestRun ? { departedRun: null, departedStop: null } : findDepartedRun(runs);
+
+      const refRun = bestRun || departedRun;
+      const refStop = bestStop || departedStop;
+      if (refRun && refStop) upsertSchedule(schedule, num, refRun, refStop, today);
+
+      if (bestRun && bestStop) {
+        displayRows.push(buildLiveTrainRow(num, bestRun, bestStop, schedule));
+      } else {
+        const sch = schedule[num];
+        if (sch && sch.schArr) {
+          displayRows.push(buildScheduledTrainRow(num, sch, departedStop ? 'TOMORROW' : 'SCHEDULED'));
+        }
+      }
+    }
+
+    // Add cached trains not in the current API response
+    for (const num of Object.keys(schedule)) {
+      if (!trainNums.includes(num)) {
+        const sch = schedule[num];
+        if (sch && sch.schArr) {
+          const parsedArr = parseScheduledTime(sch.schArr, station.tz);
+          const now = new Date();
+          const label = parsedArr.toLocaleDateString('en-US', { timeZone: station.tz }) !== now.toLocaleDateString('en-US', { timeZone: station.tz }) ? 'TOMORROW' : 'SCHEDULED';
+          displayRows.push(buildScheduledTrainRow(num, sch, label));
+        }
+      }
+    }
+
+    saveSchedule(schedule);
+    displayRows.sort((a, b) => a.arrivalDate - b.arrivalDate);
+    return displayRows;
+  }
+
+  function updateHeader(stationData) {
+    station.tz = stationData.tz || 'America/Chicago';
+    station.lat = stationData.lat;
+    station.lon = stationData.lon;
+    $('stationName').textContent = (stationData.name || station.code).toUpperCase();
+    const metaParts = [stationData.code];
+    if (stationData.address1 && stationData.address1.trim()) metaParts.push(stationData.address1.trim());
+    if (stationData.city) metaParts.push(`${stationData.city}, ${stationData.state || ''}`);
+    $('stationMeta').textContent = metaParts.join(' · ');
+    document.title = `${stationData.name || station.code} — Amtrak Arrivals`;
+  }
+
   // ── Main fetch & render ──
   async function fetchAndRender() {
+    // Cancel any in-flight requests
+    if (fetchController) fetchController.abort();
+    fetchController = new AbortController();
+    const { signal } = fetchController;
+
+    // Clear timers at the start to prevent stale callbacks during fetch
+    clearAllTimers();
+
+    if (isFetching) return;
+    isFetching = true;
+
     const dot = $('statusDot');
     dot.classList.add('loading');
     hideError();
 
     try {
-      // 1. Fetch station data
-      const stationData = await fetchStation();
+      const stationData = await fetchStation(signal);
       if (!stationData) throw new Error('Station not found');
 
-      // Update header
-      stationTz = stationData.tz || 'America/Chicago';
-      stationLat = stationData.lat;
-      stationLon = stationData.lon;
-      $('stationName').textContent = (stationData.name || stationCode).toUpperCase();
-      const metaParts = [stationData.code];
-      if (stationData.address1 && stationData.address1.trim()) metaParts.push(stationData.address1.trim());
-      if (stationData.city) metaParts.push(`${stationData.city}, ${stationData.state || ''}`);
-      $('stationMeta').textContent = metaParts.join(' · ');
-      document.title = `${stationData.name || stationCode} — Amtrak Arrivals`;
+      updateHeader(stationData);
+      initRailcam(stationData.name || station.code);
 
-      // Load saved railcam or prepare for picker
-      initRailcam(stationData.name || stationCode);
-
-      // 2. Extract unique train numbers from run IDs
       const runIds = stationData.trains || [];
       const trainNums = [...new Set(runIds.map(id => id.split('-')[0]))];
+      const trainResults = await Promise.all(trainNums.map(num => fetchTrain(num, signal)));
 
-      // 3. Fetch all train data in parallel
-      const trainResults = await Promise.all(trainNums.map(num => fetchTrain(num)));
+      const displayRows = processTrainData(trainNums, trainResults);
 
-      // 4. Process each train
-      const schedule = loadSchedule();
-      const today = new Date().toISOString().slice(0, 10);
-      const liveTrains = []; // { trainNum, route, dir, arrivalTime, status, statusClass, dateLabel, nearestStation, isLive }
-
-      for (let i = 0; i < trainNums.length; i++) {
-        const num = trainNums[i];
-        const runs = trainResults[i];
-        if (!runs || runs.length === 0) continue;
-
-        // Find the best run: the one arriving soonest where this station is Enroute or Station
-        let bestRun = null;
-        let bestStop = null;
-        let bestArrival = Infinity;
-
-        for (const run of runs) {
-          const stations = run.stations || [];
-          for (const stop of stations) {
-            if (stop.code === stationCode && (stop.status === 'Enroute' || stop.status === 'Station')) {
-              const arrTime = stop.arr ? new Date(stop.arr).getTime() : Infinity;
-              if (arrTime < bestArrival) {
-                bestRun = run;
-                bestStop = stop;
-                bestArrival = arrTime;
-              }
-              break;
-            }
-          }
-        }
-
-        // If no enroute/station stop, check for departed (use first run to learn schedule)
-        let departedRun = null;
-        let departedStop = null;
-        if (!bestRun) {
-          for (const run of runs) {
-            const stations = run.stations || [];
-            for (const stop of stations) {
-              if (stop.code === stationCode && stop.status === 'Departed') {
-                departedRun = run;
-                departedStop = stop;
-                break;
-              }
-            }
-            if (departedRun) break;
-          }
-        }
-
-        // Use whichever run we found to upsert schedule
-        const refRun = bestRun || departedRun;
-        const refStop = bestStop || departedStop;
-
-        if (refRun && refStop) {
-          const schArrDate = refStop.schArr ? new Date(refStop.schArr) : null;
-          const schDepDate = refStop.schDep ? new Date(refStop.schDep) : null;
-
-          schedule[num] = {
-            schArr: schArrDate ? formatTimeInTz(schArrDate, stationTz) : (schedule[num]?.schArr || ''),
-            schDep: schDepDate ? formatTimeInTz(schDepDate, stationTz) : (schedule[num]?.schDep || ''),
-            route: refRun.routeName || schedule[num]?.route || '',
-            dir: `→ ${refRun.destName || ''}`,
-            destCode: refRun.destCode || '',
-            destName: refRun.destName || '',
-            origCode: refRun.origCode || '',
-            origName: refRun.origName || '',
-            firstSeen: schedule[num]?.firstSeen || today,
-            lastSeen: today
-          };
-        }
-
-        // Build display row
-        if (bestRun && bestStop) {
-          // Live train
-          const estArr = bestStop.arr ? new Date(bestStop.arr) : null;
-          const schArr = bestStop.schArr ? new Date(bestStop.schArr) : null;
-          let diffMin = 0;
-          let statusText = 'ON TIME';
-          let statusClass = 'on-time';
-
-          if (estArr && schArr) {
-            diffMin = Math.round((estArr - schArr) / 60000);
-            if (diffMin > 0) {
-              statusText = `${formatDelta(diffMin)} LATE`;
-              statusClass = 'late';
-            } else if (diffMin < 0) {
-              statusText = `${formatDelta(Math.abs(diffMin))} EARLY`;
-              statusClass = 'early';
-            }
-          }
-
-          // Nearest station
-          let nearestStation = '';
-          if (bestRun.eventName) {
-            nearestStation = `NR: ${bestRun.eventName}`;
-          }
-
-          const dateLabel = getDateLabel(estArr, stationTz);
-
-          const runDay = bestRun.trainID ? bestRun.trainID.split('-').slice(1).join('-') : '';
-
-          liveTrains.push({
-            trainNum: num,
-            route: bestRun.routeName || schedule[num]?.route || '',
-            runDay,
-            dir: `→ ${bestRun.destName || ''}`,
-            arrivalTime: estArr ? formatTimeInTz(estArr, stationTz) : (schedule[num]?.schArr || '—'),
-            arrivalDate: estArr || new Date(),
-            status: statusText,
-            statusClass,
-            dateLabel,
-            nearestStation,
-            isLive: true,
-            stations: bestRun.stations || [],
-            trainLat: bestRun.lat,
-            trainLon: bestRun.lon,
-            heading: bestRun.heading,
-            velocity: bestRun.velocity
-          });
-        } else {
-          // Not active or already departed — show scheduled time
-          const sch = schedule[num];
-          if (sch && sch.schArr) {
-            liveTrains.push({
-              trainNum: num,
-              route: sch.route,
-              dir: sch.dir,
-              arrivalTime: sch.schArr,
-              arrivalDate: parseScheduledTime(sch.schArr, stationTz),
-              status: 'SCHEDULED',
-              statusClass: 'scheduled',
-              dateLabel: departedStop ? 'TOMORROW' : 'SCHEDULED',
-              nearestStation: '',
-              isLive: false
-            });
-          }
-        }
-      }
-
-      // Also add any trains from schedule that weren't in the current API response
-      for (const num of Object.keys(schedule)) {
-        if (!trainNums.includes(num)) {
-          const sch = schedule[num];
-          if (sch && sch.schArr) {
-            const parsedArr = parseScheduledTime(sch.schArr, stationTz);
-            const now = new Date();
-            liveTrains.push({
-              trainNum: num,
-              route: sch.route,
-              dir: sch.dir,
-              arrivalTime: sch.schArr,
-              arrivalDate: parsedArr,
-              status: 'SCHEDULED',
-              statusClass: 'scheduled',
-              dateLabel: parsedArr.getDate() !== now.getDate() ? 'TOMORROW' : 'SCHEDULED',
-              nearestStation: '',
-              isLive: false
-            });
-          }
-        }
-      }
-
-      saveSchedule(schedule);
-
-      // Sort all trains by next arrival time, regardless of live/scheduled status
-      liveTrains.sort((a, b) => a.arrivalDate - b.arrivalDate);
-
-      lastTrainData = liveTrains;
-      renderBoard(liveTrains);
-      updateOpenMap(liveTrains);
+      lastTrainData = displayRows;
+      renderBoard(displayRows);
+      updateOpenMap(displayRows);
       startRerender();
 
-      // Update status
       lastFetchTime = new Date();
-      $('lastUpdated').textContent = `LAST UPDATED ${formatTimeInTz(lastFetchTime, stationTz)}`;
+      $('lastUpdated').textContent = `LAST UPDATED ${formatTimeInTz(lastFetchTime, station.tz)}`;
       dot.classList.remove('loading');
 
     } catch (err) {
+      if (err.name === 'AbortError') { isFetching = false; return; }
       console.error('Fetch error:', err);
       dot.classList.remove('loading');
       showError(`Failed to fetch data: ${err.message}`);
+      if (err.message === 'Station not found') {
+        showStationSuggestions(station.code).catch(e => console.warn('Suggestion lookup failed:', e));
+      }
 
-      // Try to render from schedule cache
       const schedule = loadSchedule();
-      const cached = Object.entries(schedule).map(([num, sch]) => ({
-        trainNum: num,
-        route: sch.route,
-        dir: sch.dir,
-        arrivalTime: sch.schArr,
-        arrivalDate: parseScheduledTime(sch.schArr, stationTz),
-        status: 'SCHEDULED',
-        statusClass: 'scheduled',
-        dateLabel: 'CACHED',
-        nearestStation: '',
-        isLive: false
-      }));
+      const cached = Object.entries(schedule)
+        .filter(([, sch]) => sch && sch.schArr)
+        .map(([num, sch]) => buildScheduledTrainRow(num, sch, 'CACHED'));
       cached.sort((a, b) => a.arrivalDate - b.arrivalDate);
       if (cached.length) renderBoard(cached);
       else $('boardBody').innerHTML = '<div class="empty-state">No schedule data yet. Waiting for first successful fetch…</div>';
     }
 
+    isFetching = false;
+
     // Schedule next refresh
-    clearTimers();
-    refreshTimer = setTimeout(fetchAndRender, REFRESH_MS);
+    timers.refresh = setTimeout(fetchAndRender, REFRESH_MS);
     startCountdown();
   }
 
@@ -1212,8 +1383,14 @@
       return;
     }
 
+    // Save which detail panels are open before re-rendering
+    const openPanels = new Set();
+    $('boardBody').querySelectorAll('.detail-panel.open').forEach(panel => {
+      const trainNum = panel.getAttribute('data-train');
+      if (trainNum) openPanels.add(trainNum);
+    });
+
     const hasStations = (t) => t.stations && t.stations.length > 0;
-    const isArrivingSoon = (t) => t.isLive && t.arrivalDate && (t.arrivalDate - new Date()) > 0 && (t.arrivalDate - new Date()) <= 10 * 60 * 1000;
 
     $('boardBody').innerHTML = trains.map((t, idx) => `
       <div class="board-row ${t.statusClass}${hasStations(t) ? ' expandable' : ''}${isArrivingSoon(t) ? ' arriving-soon' : ''}" ${hasStations(t) ? `data-detail="detail-${idx}"` : ''}>
@@ -1233,7 +1410,7 @@
           ${t.trainLat != null ? `<button class="map-btn" data-map-idx="${idx}">MAP</button>` : ''}
         </div>
       </div>
-      ${hasStations(t) ? `<div class="detail-panel" id="detail-${idx}">${renderDetailPanel(t)}</div>` : ''}
+      ${hasStations(t) ? `<div class="detail-panel${openPanels.has(t.trainNum) ? ' open' : ''}" id="detail-${idx}" data-train="${t.trainNum}">${renderDetailPanel(t)}</div>` : ''}
     `).join('');
 
     // Attach click handlers for expandable rows
@@ -1275,19 +1452,17 @@
       let cls = 'enroute';
       if (stop.status === 'Departed') cls = 'departed';
       else if (stop.status === 'Station') cls = 'current';
-      if (stop.code === stationCode) cls += ' this-station';
+      if (stop.code === station.code) cls += ' this-station';
 
-      const tz = stop.tz || stationTz;
+      const tz = stop.tz || station.tz;
       const schArr = stop.schArr ? new Date(stop.schArr) : null;
       const estArr = stop.arr ? new Date(stop.arr) : null;
       const schTimeStr = schArr ? formatTimeInTz(schArr, tz) : '—';
       const estTimeStr = estArr ? formatTimeInTz(estArr, tz) : '—';
 
-      // Delta based on schedule vs estimate
-      let diffMin = 0;
+      const { diffMin } = computeDelay(estArr, schArr);
       let deltaHtml = '';
       if (schArr && estArr) {
-        diffMin = Math.round((estArr - schArr) / 60000);
         if (diffMin > 0) deltaHtml = `<span class="detail-stop-late">+${diffMin}m</span>`;
         else if (diffMin < 0) deltaHtml = `<span class="detail-stop-early">${diffMin}m</span>`;
         else deltaHtml = `<span class="detail-stop-ontime">OT</span>`;
@@ -1306,23 +1481,33 @@
     return html;
   }
 
-  // ── Map ──
-  let mapInstance = null;
-  let mapMode = null; // 'train' or 'station'
-  let mapTrainNum = null;
-  let mapTrainMarkers = {}; // keyed by trainNum
+  // ── Map (lazy-loaded Leaflet) ──
+  function loadLeaflet() {
+    return new Promise((resolve, reject) => {
+      if (mapState.leafletLoaded) { resolve(); return; }
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(link);
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+      script.onload = () => { mapState.leafletLoaded = true; resolve(); };
+      script.onerror = () => reject(new Error('Failed to load Leaflet'));
+      document.head.appendChild(script);
+    });
+  }
 
   function initMap() {
-    if (mapInstance) { mapInstance.remove(); mapInstance = null; }
-    mapTrainMarkers = {};
-    mapInstance = L.map('mapContainer', { zoomControl: true });
+    if (mapState.instance) { mapState.instance.remove(); mapState.instance = null; }
+    mapState.markers = {};
+    mapState.instance = L.map('mapContainer', { zoomControl: true });
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       attribution: 'Esri, Maxar, Earthstar Geographics',
       maxZoom: 18
-    }).addTo(mapInstance);
+    }).addTo(mapState.instance);
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 18
-    }).addTo(mapInstance);
+    }).addTo(mapState.instance);
   }
 
   function makeTrainIcon(t) {
@@ -1338,7 +1523,7 @@
   function makeStationIcon() {
     return L.divIcon({
       className: '',
-      html: `<div style="background:var(--green);color:#000;font-family:var(--font-mono);font-size:10px;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(0,0,0,0.3);box-shadow:0 2px 6px rgba(0,0,0,0.4);">${stationCode}</div>`,
+      html: `<div style="background:var(--green);color:#000;font-family:var(--font-mono);font-size:10px;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(0,0,0,0.3);box-shadow:0 2px 6px rgba(0,0,0,0.4);">${station.code}</div>`,
       iconSize: [36, 36],
       iconAnchor: [18, 18]
     });
@@ -1352,102 +1537,102 @@
     return popup;
   }
 
-  function showTrainMap(t) {
+  async function showTrainMap(t) {
+    await loadLeaflet();
     $('mapOverlay').style.display = 'flex';
     $('mapTitle').textContent = `TRAIN ${t.trainNum} — ${t.route}`;
-    mapMode = 'train';
-    mapTrainNum = t.trainNum;
+    mapState.mode = 'train';
+    mapState.trainNum = t.trainNum;
 
     initMap();
 
-    const marker = L.marker([t.trainLat, t.trainLon], { icon: makeTrainIcon(t) }).addTo(mapInstance);
+    const marker = L.marker([t.trainLat, t.trainLon], { icon: makeTrainIcon(t) }).addTo(mapState.instance);
     marker.bindPopup(makeTrainPopup(t));
-    mapTrainMarkers[t.trainNum] = marker;
+    mapState.markers[t.trainNum] = marker;
 
-    L.marker([stationLat, stationLon], { icon: makeStationIcon() }).addTo(mapInstance);
+    L.marker([station.lat, station.lon], { icon: makeStationIcon() }).addTo(mapState.instance);
 
-    const bounds = L.latLngBounds([[t.trainLat, t.trainLon], [stationLat, stationLon]]);
-    mapInstance.fitBounds(bounds, { padding: [50, 50] });
+    const bounds = L.latLngBounds([[t.trainLat, t.trainLon], [station.lat, station.lon]]);
+    mapState.instance.fitBounds(bounds, { padding: [50, 50] });
   }
 
-  function showStationMap() {
+  async function showStationMap() {
     if (!lastTrainData) return;
     const activeTrains = lastTrainData.filter(t => t.trainLat != null);
     if (!activeTrains.length) return;
 
+    await loadLeaflet();
     $('mapOverlay').style.display = 'flex';
-    $('mapTitle').textContent = `INBOUND — ${stationCode}`;
-    mapMode = 'station';
-    mapTrainNum = null;
+    $('mapTitle').textContent = `INBOUND — ${station.code}`;
+    mapState.mode = 'station';
+    mapState.trainNum = null;
 
     initMap();
 
-    const points = [[stationLat, stationLon]];
-    L.marker([stationLat, stationLon], { icon: makeStationIcon() }).addTo(mapInstance);
+    const points = [[station.lat, station.lon]];
+    L.marker([station.lat, station.lon], { icon: makeStationIcon() }).addTo(mapState.instance);
 
     for (const t of activeTrains) {
-      const marker = L.marker([t.trainLat, t.trainLon], { icon: makeTrainIcon(t) }).addTo(mapInstance);
+      const marker = L.marker([t.trainLat, t.trainLon], { icon: makeTrainIcon(t) }).addTo(mapState.instance);
       marker.bindPopup(makeTrainPopup(t));
-      mapTrainMarkers[t.trainNum] = marker;
+      mapState.markers[t.trainNum] = marker;
       points.push([t.trainLat, t.trainLon]);
     }
 
-    mapInstance.fitBounds(L.latLngBounds(points), { padding: [50, 50] });
+    mapState.instance.fitBounds(L.latLngBounds(points), { padding: [50, 50] });
   }
 
   function updateOpenMap(trains) {
-    if (!mapInstance || $('mapOverlay').style.display === 'none') return;
+    if (!mapState.instance || $('mapOverlay').style.display === 'none') return;
 
-    if (mapMode === 'train') {
-      const t = trains.find(tr => tr.trainNum === mapTrainNum && tr.trainLat != null);
+    if (mapState.mode === 'train') {
+      const t = trains.find(tr => tr.trainNum === mapState.trainNum && tr.trainLat != null);
       if (!t) return;
-      const marker = mapTrainMarkers[t.trainNum];
+      const marker = mapState.markers[t.trainNum];
       if (marker) {
         marker.setLatLng([t.trainLat, t.trainLon]);
         marker.setIcon(makeTrainIcon(t));
         marker.setPopupContent(makeTrainPopup(t));
       }
       $('mapTitle').textContent = `TRAIN ${t.trainNum} — ${t.route}`;
-      const bounds = L.latLngBounds([[t.trainLat, t.trainLon], [stationLat, stationLon]]);
-      mapInstance.fitBounds(bounds, { padding: [50, 50] });
-    } else if (mapMode === 'station') {
+      const bounds = L.latLngBounds([[t.trainLat, t.trainLon], [station.lat, station.lon]]);
+      mapState.instance.fitBounds(bounds, { padding: [50, 50] });
+    } else if (mapState.mode === 'station') {
       const activeTrains = trains.filter(t => t.trainLat != null);
-      const points = [[stationLat, stationLon]];
-
-      // Update existing markers, add new ones
+      const points = [[station.lat, station.lon]];
       const seen = new Set();
+
       for (const t of activeTrains) {
         seen.add(t.trainNum);
-        if (mapTrainMarkers[t.trainNum]) {
-          mapTrainMarkers[t.trainNum].setLatLng([t.trainLat, t.trainLon]);
-          mapTrainMarkers[t.trainNum].setIcon(makeTrainIcon(t));
-          mapTrainMarkers[t.trainNum].setPopupContent(makeTrainPopup(t));
+        if (mapState.markers[t.trainNum]) {
+          mapState.markers[t.trainNum].setLatLng([t.trainLat, t.trainLon]);
+          mapState.markers[t.trainNum].setIcon(makeTrainIcon(t));
+          mapState.markers[t.trainNum].setPopupContent(makeTrainPopup(t));
         } else {
-          const marker = L.marker([t.trainLat, t.trainLon], { icon: makeTrainIcon(t) }).addTo(mapInstance);
+          const marker = L.marker([t.trainLat, t.trainLon], { icon: makeTrainIcon(t) }).addTo(mapState.instance);
           marker.bindPopup(makeTrainPopup(t));
-          mapTrainMarkers[t.trainNum] = marker;
+          mapState.markers[t.trainNum] = marker;
         }
         points.push([t.trainLat, t.trainLon]);
       }
 
-      // Remove markers for trains no longer active
-      for (const num of Object.keys(mapTrainMarkers)) {
+      for (const num of Object.keys(mapState.markers)) {
         if (!seen.has(num)) {
-          mapInstance.removeLayer(mapTrainMarkers[num]);
-          delete mapTrainMarkers[num];
+          mapState.instance.removeLayer(mapState.markers[num]);
+          delete mapState.markers[num];
         }
       }
 
-      mapInstance.fitBounds(L.latLngBounds(points), { padding: [50, 50] });
+      mapState.instance.fitBounds(L.latLngBounds(points), { padding: [50, 50] });
     }
   }
 
   function closeMap() {
     $('mapOverlay').style.display = 'none';
-    mapMode = null;
-    mapTrainNum = null;
-    mapTrainMarkers = {};
-    if (mapInstance) { mapInstance.remove(); mapInstance = null; }
+    mapState.mode = null;
+    mapState.trainNum = null;
+    mapState.markers = {};
+    if (mapState.instance) { mapState.instance.remove(); mapState.instance = null; }
   }
 
   $('stationMapBtn').addEventListener('click', showStationMap);
@@ -1455,63 +1640,6 @@
   $('mapOverlay').addEventListener('click', (e) => {
     if (e.target === $('mapOverlay')) closeMap();
   });
-
-  // ── Helpers ──
-  function formatTimeInTz(date, tz) {
-    try {
-      return date.toLocaleTimeString('en-US', {
-        hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz
-      });
-    } catch {
-      return date.toLocaleTimeString('en-US', {
-        hour: 'numeric', minute: '2-digit', hour12: true
-      });
-    }
-  }
-
-  function getDateLabel(date, tz) {
-    if (!date) return '';
-    const now = new Date();
-    try {
-      const dayNow = now.toLocaleDateString('en-US', { timeZone: tz });
-      const dayArr = date.toLocaleDateString('en-US', { timeZone: tz });
-      if (dayNow === dayArr) return 'TODAY';
-      // Check tomorrow
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const dayTom = tomorrow.toLocaleDateString('en-US', { timeZone: tz });
-      if (dayTom === dayArr) return 'TOMORROW';
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: tz }).toUpperCase();
-    } catch {
-      return 'TODAY';
-    }
-  }
-
-  function parseScheduledTime(timeStr, tz) {
-    // Parse a time string like "11:26 AM" into a Date for today in the station's timezone
-    const now = new Date();
-    const [time, period] = timeStr.split(' ');
-    const [h, m] = time.split(':').map(Number);
-    let hour = h;
-    if (period === 'PM' && hour !== 12) hour += 12;
-    if (period === 'AM' && hour === 12) hour = 0;
-    const d = new Date(now);
-    d.setHours(hour, m, 0, 0);
-    if (d < now) d.setDate(d.getDate() + 1);
-    return d;
-  }
-
-  function formatDelta(minutes) {
-    if (minutes < 60) return `${minutes} MIN`;
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    return m === 0 ? `${h} HR` : `${h} HR ${m} MIN`;
-  }
-
-  function escHtml(str) {
-    if (!str) return '';
-    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
 
   // ── Start ──
   init();

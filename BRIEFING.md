@@ -235,14 +235,15 @@ Each row:
 
 ## Suggested Feature Roadmap (post-rebuild)
 
-These were discussed and are planned for future iterations:
+Completed features are marked. Remaining items are planned for future iterations:
 
 1. **Manual refresh button** — don't wait 10 minutes, click to refresh now
-2. **Row detail expand** — click a train row to see full station-by-station status for that run
-3. **Proximity alert** — visual/audio alert when a train is N stops away from the station
-4. **Station switcher UI** — input field to change station code without editing code
+2. ~~**Row detail expand**~~ — click a train row to see full station-by-station status ✓
+3. ~~**Proximity alert**~~ — pulsing amber highlight when a train is within 10 minutes ✓
+4. ~~**Station switcher UI**~~ — input field to change station code ✓
 5. **Python local server instructions** in README — serve on local network for phone access
-6. **Train map** — plot current GPS positions on a simple map
+6. ~~**Train map**~~ — satellite map with live GPS positions (single train + inbound map) ✓
+7. ~~**Railcam link**~~ — user-configured YouTube railcam per station, shown on arriving-soon rows ✓
 
 ---
 
@@ -279,13 +280,19 @@ As the app grows, consider splitting into:
 - **Station-agnostic from the start** — the station code drives everything, no hardcoded station data
 - **Show trains not yet learned simply by omitting them** — the board grows naturally over time
 - **CORS works from file:// origin** — confirmed working locally; the Amtraker API is permissive
+- **Lazy-load Leaflet** — map library only loads on first map open, not on page load
+- **AbortController on fetch** — switching stations cancels in-flight API requests to prevent race conditions
+- **30-second re-render** — board refreshes every 30s between API cycles so arriving-soon alerts appear promptly
+- **Timezone-aware schedule parsing** — `parseScheduledTime` respects the station's timezone, not the browser's
+- **Grouped state objects** — station, timer, and map state are organized into objects instead of flat variables
+- **Preserved detail panel state** — expanded train rows stay open across 30-second re-renders
 
 ---
 
 ## Notes / Gotchas
 
 - The Amtraker API can lag up to ~60 minutes behind real time — the `lastValTS` field on each run shows when data was last updated by the source
-- Multiple runs of the same train number can be active simultaneously (e.g. `4-24`, `4-25`, `4-26`) — always use the first run where the station status is `Enroute` or `Station`; ignore runs where the station is `Departed`
+- Multiple runs of the same train number can be active simultaneously (e.g. `4-24`, `4-25`, `4-26`) — always use the run arriving soonest where the station status is `Enroute` or `Station`; ignore runs where the station is `Departed`
 - Train 4 (Southwest Chief) was observed running ~11 hours late during this session — normal lateness on freight-dominated corridors
 - The Illinois Zephyr/Carl Sandburg trains (380-383) run the same Chicago–Quincy route and share all stops between Chicago and Galesburg
 - Station timezone is provided in each stop object — use it when formatting times
