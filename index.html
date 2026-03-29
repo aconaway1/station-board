@@ -199,6 +199,35 @@
   }
 
   .station-switcher button:hover { opacity: 0.85; }
+  .switcher-divider {
+    width: 1px;
+    height: 18px;
+    background: var(--muted);
+    margin: 0 4px;
+    opacity: 0.4;
+  }
+  .railcam-status {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text);
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .railcam-status.none { color: var(--muted); font-style: italic; }
+  .railcam-setup-btn {
+    background: rgba(245,166,35,0.15);
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+  }
+  .railcam-setup-btn:hover { background: rgba(245,166,35,0.3); }
 
   /* ── Board ── */
   .board {
@@ -257,9 +286,96 @@
     animation: railcam-blink 1.5s ease-in-out infinite;
   }
   .railcam-link:hover { text-decoration: underline; }
+  .railcam-change {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    color: var(--muted);
+    text-decoration: none;
+    cursor: pointer;
+    margin-left: 6px;
+    border: none;
+    background: none;
+    padding: 0;
+  }
+  .railcam-change:hover { color: var(--amber); }
+  .railcam-pick {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: var(--amber);
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+    background: none;
+    padding: 0;
+    letter-spacing: 0.5px;
+  }
+  .railcam-pick:hover { text-decoration: underline; }
   @keyframes railcam-blink {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
+  }
+  .railcam-modal {
+    background: var(--panel);
+    border: 1px solid rgba(245,166,35,0.3);
+    border-radius: 8px;
+    width: 90vw;
+    max-width: 450px;
+    overflow: hidden;
+  }
+  .railcam-steps {
+    padding: 0 16px 16px;
+  }
+  .railcam-step {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .railcam-yt-btn {
+    background: rgba(255,77,77,0.15);
+    border: 1px solid var(--red);
+    color: var(--red);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    width: 100%;
+    margin-bottom: 16px;
+  }
+  .railcam-yt-btn:hover { background: rgba(255,77,77,0.25); }
+  .railcam-search-bar {
+    display: flex;
+    gap: 8px;
+  }
+  .railcam-search-bar input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--muted);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    padding: 6px 10px;
+    border-radius: 4px;
+    outline: none;
+  }
+  .railcam-search-bar input:focus { border-color: var(--amber); }
+  .railcam-search-bar button {
+    background: rgba(245,166,35,0.15);
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .railcam-search-bar button:hover { background: rgba(245,166,35,0.3); }
+  .railcam-error {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--red);
+    margin-top: 8px;
   }
 
   .train-num {
@@ -532,6 +648,12 @@
     <label for="stationInput">Station:</label>
     <input type="text" id="stationInput" maxlength="4" value="GBB">
     <button id="stationGo">Go</button>
+    <span class="switcher-divider"></span>
+    <label>Railcam:</label>
+    <span id="railcamStatus" class="railcam-status">None</span>
+    <button id="railcamSetupBtn" class="railcam-setup-btn">Set up</button>
+    <span class="switcher-divider"></span>
+    <button class="map-btn" id="stationMapBtn">INBOUND MAP</button>
   </div>
 
   <!-- Error banner -->
@@ -581,6 +703,26 @@
   </div>
 </div>
 
+<!-- Railcam picker modal -->
+<div class="map-overlay" id="railcamOverlay" style="display:none">
+  <div class="railcam-modal">
+    <div class="map-modal-header">
+      <span id="railcamTitle">SET UP RAILCAM</span>
+      <button class="map-modal-close" id="railcamClose">&times;</button>
+    </div>
+    <div class="railcam-steps">
+      <div class="railcam-step">1. Find a railcam on YouTube</div>
+      <button class="railcam-yt-btn" id="railcamYtBtn">SEARCH YOUTUBE</button>
+      <div class="railcam-step">2. Paste the video URL here</div>
+      <div class="railcam-search-bar">
+        <input type="text" id="railcamUrlInput" placeholder="https://www.youtube.com/watch?v=...">
+        <button id="railcamSaveBtn">Save</button>
+      </div>
+      <div class="railcam-error" id="railcamError" style="display:none">Please paste a valid YouTube URL</div>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
   'use strict';
@@ -597,6 +739,8 @@
   let refreshTimer = null;
   let countdownTimer = null;
   let refreshDeadline = null;
+  let rerenderTimer = null;
+  let lastTrainData = null;
 
   const $ = (id) => document.getElementById(id);
 
@@ -673,6 +817,14 @@
   function clearTimers() {
     clearTimeout(refreshTimer);
     clearInterval(countdownTimer);
+    clearInterval(rerenderTimer);
+  }
+
+  function startRerender() {
+    clearInterval(rerenderTimer);
+    rerenderTimer = setInterval(() => {
+      if (lastTrainData) renderBoard(lastTrainData);
+    }, 30000);
   }
 
   // ── Error handling ──
@@ -712,13 +864,14 @@
     localStorage.setItem(getScheduleKey(), JSON.stringify(schedule));
   }
 
-  // ── Railcam search ──
+  // ── Railcam ──
   function getRailcamKey() { return `amtrak_railcam_${stationCode}`; }
+  let stationNameForRailcam = '';
 
   function loadRailcam() {
     try {
       const cached = JSON.parse(localStorage.getItem(getRailcamKey()));
-      if (cached && cached.url && (Date.now() - cached.ts) < 7 * 24 * 60 * 60 * 1000) return cached.url;
+      if (cached && cached.url) return cached.url;
     } catch {}
     return null;
   }
@@ -727,44 +880,68 @@
     localStorage.setItem(getRailcamKey(), JSON.stringify({ url, ts: Date.now() }));
   }
 
-  const PIPED_INSTANCES = [
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.adminforge.de',
-    'https://api.piped.yt'
-  ];
-
-  async function searchRailcam(stationName) {
-    // Check cache first (valid for 7 days)
+  function initRailcam(stationName) {
+    stationNameForRailcam = stationName;
     const cached = loadRailcam();
-    if (cached) { railcamUrl = cached; return; }
-
-    const query = encodeURIComponent(`${stationName} railcam live`);
-
-    // Try each Piped instance
-    for (const instance of PIPED_INSTANCES) {
-      try {
-        const resp = await fetch(`${instance}/search?q=${query}&filter=all`);
-        if (!resp.ok) continue;
-        const data = await resp.json();
-        const items = data.items || data;
-        if (!items || !items.length) continue;
-        const live = items.find(v => v.isShort === false && v.duration === -1);
-        const railcam = items.find(v => v.title && /railcam|rail cam|train cam/i.test(v.title));
-        const best = live || railcam || items[0];
-        if (best && best.url) {
-          const ytUrl = `https://www.youtube.com${best.url}`;
-          railcamUrl = ytUrl;
-          saveRailcam(ytUrl);
-          return;
-        }
-      } catch {}
-    }
-
-    // Fallback: direct YouTube search link
-    const fallback = `https://www.youtube.com/results?search_query=${query}`;
-    railcamUrl = fallback;
-    saveRailcam(fallback);
+    if (cached) { railcamUrl = cached; }
+    updateRailcamStatus();
   }
+
+  function isYouTubeUrl(str) {
+    return /^https?:\/\/(www\.)?(youtube\.com\/watch\?|youtu\.be\/|youtube\.com\/live\/)/.test(str);
+  }
+
+  function updateRailcamStatus() {
+    const statusEl = $('railcamStatus');
+    const btn = $('railcamSetupBtn');
+    if (railcamUrl) {
+      statusEl.textContent = 'Saved';
+      statusEl.classList.remove('none');
+      btn.textContent = 'Change';
+    } else {
+      statusEl.textContent = 'None';
+      statusEl.classList.add('none');
+      btn.textContent = 'Set up';
+    }
+  }
+
+  function openRailcamPicker() {
+    $('railcamOverlay').style.display = 'flex';
+    $('railcamUrlInput').value = '';
+    $('railcamError').style.display = 'none';
+  }
+
+  function closeRailcamPicker() {
+    $('railcamOverlay').style.display = 'none';
+  }
+
+  $('railcamYtBtn').addEventListener('click', () => {
+    const query = encodeURIComponent(`${stationNameForRailcam || stationCode} railcam live`);
+    window.open(`https://www.youtube.com/results?search_query=${query}`, '_blank');
+  });
+
+  $('railcamSaveBtn').addEventListener('click', () => {
+    const url = $('railcamUrlInput').value.trim();
+    if (!isYouTubeUrl(url)) {
+      $('railcamError').style.display = 'block';
+      return;
+    }
+    railcamUrl = url;
+    saveRailcam(url);
+    updateRailcamStatus();
+    closeRailcamPicker();
+  });
+
+  $('railcamUrlInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('railcamSaveBtn').click();
+    $('railcamError').style.display = 'none';
+  });
+
+  $('railcamSetupBtn').addEventListener('click', openRailcamPicker);
+  $('railcamClose').addEventListener('click', closeRailcamPicker);
+  $('railcamOverlay').addEventListener('click', (e) => {
+    if (e.target === $('railcamOverlay')) closeRailcamPicker();
+  });
 
   // ── API calls ──
   async function fetchStation() {
@@ -813,8 +990,8 @@
       $('stationMeta').textContent = metaParts.join(' · ');
       document.title = `${stationData.name || stationCode} — Amtrak Arrivals`;
 
-      // Search for railcam (non-blocking)
-      searchRailcam(stationData.name || stationCode);
+      // Load saved railcam or prepare for picker
+      initRailcam(stationData.name || stationCode);
 
       // 2. Extract unique train numbers from run IDs
       const runIds = stationData.trains || [];
@@ -904,10 +1081,10 @@
           if (estArr && schArr) {
             diffMin = Math.round((estArr - schArr) / 60000);
             if (diffMin > 0) {
-              statusText = `${diffMin} MIN LATE`;
+              statusText = `${formatDelta(diffMin)} LATE`;
               statusClass = 'late';
             } else if (diffMin < 0) {
-              statusText = `${Math.abs(diffMin)} MIN EARLY`;
+              statusText = `${formatDelta(Math.abs(diffMin))} EARLY`;
               statusClass = 'early';
             }
           }
@@ -988,8 +1165,10 @@
       // Sort all trains by next arrival time, regardless of live/scheduled status
       liveTrains.sort((a, b) => a.arrivalDate - b.arrivalDate);
 
+      lastTrainData = liveTrains;
       renderBoard(liveTrains);
       updateOpenMap(liveTrains);
+      startRerender();
 
       // Update status
       lastFetchTime = new Date();
@@ -1042,7 +1221,7 @@
         <div>
           <div class="route-name">${escHtml(t.route)}${t.runDay ? ` (${escHtml(t.runDay)})` : ''}</div>
           ${t.nearestStation ? `<div class="route-nearest">${escHtml(t.nearestStation)}</div>` : ''}
-          ${isArrivingSoon(t) && railcamUrl ? `<a class="railcam-link" href="${railcamUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()">WATCH RAILCAM</a>` : ''}
+          ${isArrivingSoon(t) && railcamUrl ? `<a class="railcam-link" href="${railcamUrl}" target="_blank" rel="noopener">WATCH RAILCAM</a>` : ''}
         </div>
         <div class="direction col-dir">${escHtml(t.dir)}</div>
         <div>
@@ -1075,6 +1254,11 @@
         const t = trains[idx];
         if (t && t.trainLat != null) showTrainMap(t);
       });
+    });
+
+    // Stop propagation on railcam watch links
+    $('boardBody').querySelectorAll('.railcam-link').forEach(link => {
+      link.addEventListener('click', (e) => e.stopPropagation());
     });
   }
 
@@ -1124,20 +1308,14 @@
 
   // ── Map ──
   let mapInstance = null;
+  let mapMode = null; // 'train' or 'station'
   let mapTrainNum = null;
-  let mapTrainMarker = null;
+  let mapTrainMarkers = {}; // keyed by trainNum
 
-  function showTrainMap(t) {
-    const overlay = $('mapOverlay');
-    overlay.style.display = 'flex';
-    $('mapTitle').textContent = `TRAIN ${t.trainNum} — ${t.route}`;
-    mapTrainNum = t.trainNum;
-
-    // Destroy previous map if any
+  function initMap() {
     if (mapInstance) { mapInstance.remove(); mapInstance = null; }
-
+    mapTrainMarkers = {};
     mapInstance = L.map('mapContainer', { zoomControl: true });
-
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       attribution: 'Esri, Maxar, Earthstar Geographics',
       maxZoom: 18
@@ -1145,63 +1323,135 @@
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 18
     }).addTo(mapInstance);
+  }
 
-    const trainIcon = L.divIcon({
+  function makeTrainIcon(t) {
+    const speed = t.velocity != null ? `${Math.round(t.velocity)}` : '';
+    return L.divIcon({
       className: '',
-      html: `<div style="background:var(--amber);color:#000;font-family:var(--font-display);font-size:14px;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(0,0,0,0.3);box-shadow:0 2px 6px rgba(0,0,0,0.4);">${t.trainNum}</div>`,
-      iconSize: [36, 36],
-      iconAnchor: [18, 18]
+      html: `<div style="background:var(--amber);color:#000;font-family:var(--font-display);width:46px;height:46px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;border:2px solid rgba(0,0,0,0.3);box-shadow:0 2px 6px rgba(0,0,0,0.4);line-height:1;"><span style="font-size:15px;">${t.trainNum}</span>${speed ? `<span style="font-size:9px;font-family:var(--font-mono);opacity:0.7;">${speed}mph</span>` : ''}</div>`,
+      iconSize: [46, 46],
+      iconAnchor: [23, 23]
     });
+  }
 
-    const stationIcon = L.divIcon({
+  function makeStationIcon() {
+    return L.divIcon({
       className: '',
       html: `<div style="background:var(--green);color:#000;font-family:var(--font-mono);font-size:10px;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(0,0,0,0.3);box-shadow:0 2px 6px rgba(0,0,0,0.4);">${stationCode}</div>`,
       iconSize: [36, 36],
       iconAnchor: [18, 18]
     });
+  }
 
-    mapTrainMarker = L.marker([t.trainLat, t.trainLon], { icon: trainIcon }).addTo(mapInstance);
-    L.marker([stationLat, stationLon], { icon: stationIcon }).addTo(mapInstance);
+  function makeTrainPopup(t) {
+    let popup = `Train ${t.trainNum} — ${t.route || ''}`;
+    if (t.dir) popup += `<br>${t.dir}`;
+    if (t.heading) popup += `<br>Heading ${t.heading}`;
+    if (t.velocity != null) popup += ` · ${Math.round(t.velocity)} mph`;
+    return popup;
+  }
 
-    updateTrainPopup(mapTrainMarker, t);
+  function showTrainMap(t) {
+    $('mapOverlay').style.display = 'flex';
+    $('mapTitle').textContent = `TRAIN ${t.trainNum} — ${t.route}`;
+    mapMode = 'train';
+    mapTrainNum = t.trainNum;
 
-    const bounds = L.latLngBounds([
-      [t.trainLat, t.trainLon],
-      [stationLat, stationLon]
-    ]);
+    initMap();
+
+    const marker = L.marker([t.trainLat, t.trainLon], { icon: makeTrainIcon(t) }).addTo(mapInstance);
+    marker.bindPopup(makeTrainPopup(t));
+    mapTrainMarkers[t.trainNum] = marker;
+
+    L.marker([stationLat, stationLon], { icon: makeStationIcon() }).addTo(mapInstance);
+
+    const bounds = L.latLngBounds([[t.trainLat, t.trainLon], [stationLat, stationLon]]);
     mapInstance.fitBounds(bounds, { padding: [50, 50] });
   }
 
-  function updateTrainPopup(marker, t) {
-    let popup = `Train ${t.trainNum}`;
-    if (t.heading) popup += ` · Heading ${t.heading}`;
-    if (t.velocity != null) popup += ` · ${Math.round(t.velocity)} mph`;
-    marker.bindPopup(popup);
+  function showStationMap() {
+    if (!lastTrainData) return;
+    const activeTrains = lastTrainData.filter(t => t.trainLat != null);
+    if (!activeTrains.length) return;
+
+    $('mapOverlay').style.display = 'flex';
+    $('mapTitle').textContent = `INBOUND — ${stationCode}`;
+    mapMode = 'station';
+    mapTrainNum = null;
+
+    initMap();
+
+    const points = [[stationLat, stationLon]];
+    L.marker([stationLat, stationLon], { icon: makeStationIcon() }).addTo(mapInstance);
+
+    for (const t of activeTrains) {
+      const marker = L.marker([t.trainLat, t.trainLon], { icon: makeTrainIcon(t) }).addTo(mapInstance);
+      marker.bindPopup(makeTrainPopup(t));
+      mapTrainMarkers[t.trainNum] = marker;
+      points.push([t.trainLat, t.trainLon]);
+    }
+
+    mapInstance.fitBounds(L.latLngBounds(points), { padding: [50, 50] });
   }
 
   function updateOpenMap(trains) {
-    if (!mapInstance || !mapTrainNum || $('mapOverlay').style.display === 'none') return;
-    const t = trains.find(tr => tr.trainNum === mapTrainNum && tr.trainLat != null);
-    if (!t) return;
-    mapTrainMarker.setLatLng([t.trainLat, t.trainLon]);
-    updateTrainPopup(mapTrainMarker, t);
-    $('mapTitle').textContent = `TRAIN ${t.trainNum} — ${t.route}`;
-    const bounds = L.latLngBounds([
-      [t.trainLat, t.trainLon],
-      [stationLat, stationLon]
-    ]);
-    mapInstance.fitBounds(bounds, { padding: [50, 50] });
+    if (!mapInstance || $('mapOverlay').style.display === 'none') return;
+
+    if (mapMode === 'train') {
+      const t = trains.find(tr => tr.trainNum === mapTrainNum && tr.trainLat != null);
+      if (!t) return;
+      const marker = mapTrainMarkers[t.trainNum];
+      if (marker) {
+        marker.setLatLng([t.trainLat, t.trainLon]);
+        marker.setIcon(makeTrainIcon(t));
+        marker.setPopupContent(makeTrainPopup(t));
+      }
+      $('mapTitle').textContent = `TRAIN ${t.trainNum} — ${t.route}`;
+      const bounds = L.latLngBounds([[t.trainLat, t.trainLon], [stationLat, stationLon]]);
+      mapInstance.fitBounds(bounds, { padding: [50, 50] });
+    } else if (mapMode === 'station') {
+      const activeTrains = trains.filter(t => t.trainLat != null);
+      const points = [[stationLat, stationLon]];
+
+      // Update existing markers, add new ones
+      const seen = new Set();
+      for (const t of activeTrains) {
+        seen.add(t.trainNum);
+        if (mapTrainMarkers[t.trainNum]) {
+          mapTrainMarkers[t.trainNum].setLatLng([t.trainLat, t.trainLon]);
+          mapTrainMarkers[t.trainNum].setIcon(makeTrainIcon(t));
+          mapTrainMarkers[t.trainNum].setPopupContent(makeTrainPopup(t));
+        } else {
+          const marker = L.marker([t.trainLat, t.trainLon], { icon: makeTrainIcon(t) }).addTo(mapInstance);
+          marker.bindPopup(makeTrainPopup(t));
+          mapTrainMarkers[t.trainNum] = marker;
+        }
+        points.push([t.trainLat, t.trainLon]);
+      }
+
+      // Remove markers for trains no longer active
+      for (const num of Object.keys(mapTrainMarkers)) {
+        if (!seen.has(num)) {
+          mapInstance.removeLayer(mapTrainMarkers[num]);
+          delete mapTrainMarkers[num];
+        }
+      }
+
+      mapInstance.fitBounds(L.latLngBounds(points), { padding: [50, 50] });
+    }
   }
 
   function closeMap() {
     $('mapOverlay').style.display = 'none';
+    mapMode = null;
     mapTrainNum = null;
-    mapTrainMarker = null;
+    mapTrainMarkers = {};
     if (mapInstance) { mapInstance.remove(); mapInstance = null; }
   }
 
+  $('stationMapBtn').addEventListener('click', showStationMap);
   $('mapClose').addEventListener('click', closeMap);
-
   $('mapOverlay').addEventListener('click', (e) => {
     if (e.target === $('mapOverlay')) closeMap();
   });
@@ -1249,6 +1499,13 @@
     d.setHours(hour, m, 0, 0);
     if (d < now) d.setDate(d.getDate() + 1);
     return d;
+  }
+
+  function formatDelta(minutes) {
+    if (minutes < 60) return `${minutes} MIN`;
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m === 0 ? `${h} HR` : `${h} HR ${m} MIN`;
   }
 
   function escHtml(str) {
