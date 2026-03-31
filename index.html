@@ -668,6 +668,7 @@
     <span class="switcher-divider"></span>
     <label>Railcam:</label>
     <span id="railcamStatus" class="railcam-status">None</span>
+    <a id="railcamWatch" class="railcam-setup-btn" style="display:none;text-decoration:none;" target="_blank" rel="noopener">Watch</a>
     <button id="railcamSetupBtn" class="railcam-setup-btn">Set up</button>
     <span class="switcher-divider"></span>
     <button class="map-btn" id="stationMapBtn">INBOUND MAP</button>
@@ -708,6 +709,8 @@
     </div>
   </div>
 </div>
+
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.3.0 &mdash; &copy; 2026</div>
 
 <!-- Map modal -->
 <div class="map-overlay" id="mapOverlay" style="display:none">
@@ -832,7 +835,7 @@
   }
 
   function parseScheduledTime(timeStr, tz) {
-    // Build a date for the given time in the station's timezone
+    // Build a Date representing the given time today in the station's timezone
     const now = new Date();
     const [time, period] = timeStr.split(' ');
     const [h, m] = time.split(':').map(Number);
@@ -840,27 +843,23 @@
     if (period === 'PM' && hour !== 12) hour += 12;
     if (period === 'AM' && hour === 12) hour = 0;
 
-    // Format today's date in the station's timezone, then build an ISO string
     try {
       const dateStr = now.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
       const pad = (n) => String(n).padStart(2, '0');
-      // Get the station's UTC offset by comparing formatted times
-      const probe = new Date(`${dateStr}T${pad(hour)}:${pad(m)}:00`);
-      const stationTimeStr = probe.toLocaleString('en-US', { timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      // Parse the station-local formatted time back
-      const [datePart, timePart] = stationTimeStr.split(', ');
+      // Treat the target time as UTC, then find what that instant looks like in the
+      // station timezone to derive the offset
+      const guessUTC = new Date(`${dateStr}T${pad(hour)}:${pad(m)}:00Z`);
+      const fmt = guessUTC.toLocaleString('en-US', { timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const [datePart, timePart] = fmt.split(', ');
       const [mo, dy, yr] = datePart.split('/');
       const [hh, mm, ss] = timePart.split(':');
-      const localInTz = new Date(Date.UTC(+yr, +mo - 1, +dy, +hh, +mm, +ss));
-      // The offset is the difference between UTC interpretation and actual UTC
-      const offset = localInTz - probe;
-      const d = new Date(probe.getTime() + offset);
-      // If this time has already passed in the station's timezone, bump to tomorrow
-      const nowInTzStr = now.toLocaleString('en-US', { timeZone: tz, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const fmtAsUTC = Date.UTC(+yr, +mo - 1, +dy, +hh, +mm, +ss);
+      const tzOffset = fmtAsUTC - guessUTC.getTime();
+      // Subtract the offset so the Date represents the target local time in UTC
+      const d = new Date(guessUTC.getTime() - tzOffset);
       if (d < now) d.setDate(d.getDate() + 1);
       return d;
     } catch {
-      // Fallback: use browser local time (original behavior)
       const d = new Date(now);
       d.setHours(hour, m, 0, 0);
       if (d < now) d.setDate(d.getDate() + 1);
@@ -1019,14 +1018,18 @@
   function updateRailcamStatus() {
     const statusEl = $('railcamStatus');
     const btn = $('railcamSetupBtn');
+    const watchLink = $('railcamWatch');
     if (railcamUrl) {
       statusEl.textContent = 'Saved';
       statusEl.classList.remove('none');
       btn.textContent = 'Change';
+      watchLink.href = railcamUrl;
+      watchLink.style.display = '';
     } else {
       statusEl.textContent = 'None';
       statusEl.classList.add('none');
       btn.textContent = 'Set up';
+      watchLink.style.display = 'none';
     }
   }
 
@@ -1277,7 +1280,14 @@
       } else {
         const sch = schedule[num];
         if (sch && sch.schArr) {
-          displayRows.push(buildScheduledTrainRow(num, sch, departedStop ? 'TOMORROW' : 'SCHEDULED'));
+          let label = 'SCHEDULED';
+          if (departedStop) {
+            // Only say TOMORROW if the scheduled time has already passed today
+            const parsedArr = parseScheduledTime(sch.schArr, station.tz);
+            const now = new Date();
+            label = parsedArr.toLocaleDateString('en-US', { timeZone: station.tz }) !== now.toLocaleDateString('en-US', { timeZone: station.tz }) ? 'TOMORROW' : 'SCHEDULED';
+          }
+          displayRows.push(buildScheduledTrainRow(num, sch, label));
         }
       }
     }
@@ -1355,6 +1365,12 @@
       if (err.name === 'AbortError') { isFetching = false; return; }
       console.error('Fetch error:', err);
       dot.classList.remove('loading');
+      // If header is still "LOADING…", show the station code instead
+      if ($('stationName').textContent === 'LOADING…') {
+        $('stationName').textContent = station.code;
+        $('stationMeta').textContent = 'Offline — showing cached schedule';
+        document.title = `${station.code} — Amtrak Arrivals`;
+      }
       showError(`Failed to fetch data: ${err.message}`);
       if (err.message === 'Station not found') {
         showStationSuggestions(station.code).catch(e => console.warn('Suggestion lookup failed:', e));
