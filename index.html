@@ -506,6 +506,26 @@
   .detail-stop.this-station { color: var(--amber); font-weight: 700; }
   .detail-stop.this-station::before { background: var(--amber); width: 10px; height: 10px; left: -6px; }
 
+  .detail-stop-divider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0 4px 18px;
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    color: var(--amber);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    opacity: 0.7;
+  }
+  .detail-stop-divider::before, .detail-stop-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--amber);
+    opacity: 0.4;
+  }
+
   .detail-stop-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .detail-stop-code { color: var(--muted); font-size: 0.6rem; margin-left: 4px; }
 
@@ -635,6 +655,27 @@
     max-height: 500px;
   }
 
+  /* ── Stale state ── */
+  .stale-badge {
+    display: none;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--red);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-left: 12px;
+    vertical-align: middle;
+    animation: stale-blink 1.5s ease-in-out infinite;
+  }
+  body.stale .stale-badge { display: inline; }
+  body.stale .station-name {
+    text-shadow: 0 0 18px rgba(255,77,77,0.7), 0 0 40px rgba(255,77,77,0.3);
+  }
+  @keyframes stale-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
   /* ── Responsive ── */
   @media (max-width: 700px) {
     .board-header, .board-row {
@@ -651,7 +692,9 @@
   <!-- Header -->
   <div class="header">
     <div>
-      <div class="station-name" id="stationName">LOADING…</div>
+      <div>
+        <span class="station-name" id="stationName">LOADING…</span><span class="stale-badge" id="staleBadge">STALE</span>
+      </div>
       <div class="station-meta" id="stationMeta"></div>
     </div>
     <div class="clock-wrap">
@@ -710,7 +753,7 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.3.0 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.4.1 &mdash; &copy; 2026</div>
 
 <!-- Map modal -->
 <div class="map-overlay" id="mapOverlay" style="display:none">
@@ -897,6 +940,7 @@
     localStorage.setItem('amtrak_station', code);
     $('stationName').textContent = 'LOADING…';
     $('stationMeta').textContent = '';
+    clearStale();
     showSkeleton();
     hideError();
     closeMap();
@@ -991,6 +1035,40 @@
     localStorage.setItem(getScheduleKey(), JSON.stringify(schedule));
   }
 
+  // ── Live cache ──
+  function getLiveCacheKey() { return `amtrak_live_${station.code}`; }
+
+  function saveLiveCache(rows) {
+    try {
+      const serializable = rows.map(r => ({ ...r, arrivalDate: r.arrivalDate.getTime() }));
+      localStorage.setItem(getLiveCacheKey(), JSON.stringify({ ts: Date.now(), rows: serializable }));
+    } catch (e) {
+      console.warn('Failed to save live cache:', e);
+    }
+  }
+
+  function loadLiveCache() {
+    try {
+      const raw = localStorage.getItem(getLiveCacheKey());
+      if (!raw) return null;
+      const { ts, rows } = JSON.parse(raw);
+      return { ts, rows: rows.map(r => ({ ...r, arrivalDate: new Date(r.arrivalDate) })) };
+    } catch (e) {
+      console.warn('Failed to load live cache:', e);
+      return null;
+    }
+  }
+
+  function setStale(ts) {
+    document.body.classList.add('stale');
+    const staleTime = new Date(ts);
+    $('lastUpdated').textContent = `STALE — LAST KNOWN ${formatTimeInTz(staleTime, station.tz)}`;
+  }
+
+  function clearStale() {
+    document.body.classList.remove('stale');
+  }
+
   // ── Railcam ──
   function getRailcamKey() { return `amtrak_railcam_${station.code}`; }
 
@@ -1058,6 +1136,7 @@
     saveRailcam(url);
     updateRailcamStatus();
     closeRailcamPicker();
+    if (lastTrainData) renderBoard(lastTrainData);
   });
 
   $('railcamUrlInput').addEventListener('keydown', (e) => {
@@ -1353,6 +1432,8 @@
       const displayRows = processTrainData(trainNums, trainResults);
 
       lastTrainData = displayRows;
+      saveLiveCache(displayRows);
+      clearStale();
       renderBoard(displayRows);
       updateOpenMap(displayRows);
       startRerender();
@@ -1376,13 +1457,22 @@
         showStationSuggestions(station.code).catch(e => console.warn('Suggestion lookup failed:', e));
       }
 
-      const schedule = loadSchedule();
-      const cached = Object.entries(schedule)
-        .filter(([, sch]) => sch && sch.schArr)
-        .map(([num, sch]) => buildScheduledTrainRow(num, sch, 'CACHED'));
-      cached.sort((a, b) => a.arrivalDate - b.arrivalDate);
-      if (cached.length) renderBoard(cached);
-      else $('boardBody').innerHTML = '<div class="empty-state">No schedule data yet. Waiting for first successful fetch…</div>';
+      const liveCache = loadLiveCache();
+      if (liveCache && liveCache.rows.length) {
+        lastTrainData = liveCache.rows;
+        renderBoard(liveCache.rows);
+        updateOpenMap(liveCache.rows);
+        startRerender();
+        setStale(liveCache.ts);
+      } else {
+        const schedule = loadSchedule();
+        const cached = Object.entries(schedule)
+          .filter(([, sch]) => sch && sch.schArr)
+          .map(([num, sch]) => buildScheduledTrainRow(num, sch, 'CACHED'));
+        cached.sort((a, b) => a.arrivalDate - b.arrivalDate);
+        if (cached.length) renderBoard(cached);
+        else $('boardBody').innerHTML = '<div class="empty-state">No schedule data yet. Waiting for first successful fetch…</div>';
+      }
     }
 
     isFetching = false;
@@ -1464,11 +1554,17 @@
       <span></span><span>Station</span><span>Sched</span><span>Est</span><span class="detail-stop-delta">+/-</span>
     </div>`;
 
+    let dividerInserted = false;
     for (const stop of stops) {
       let cls = 'enroute';
       if (stop.status === 'Departed') cls = 'departed';
       else if (stop.status === 'Station') cls = 'current';
       if (stop.code === station.code) cls += ' this-station';
+
+      if (!dividerInserted && stop.status !== 'Departed') {
+        html += '<div class="detail-stop-divider">NOW</div>';
+        dividerInserted = true;
+      }
 
       const tz = stop.tz || station.tz;
       const schArr = stop.schArr ? new Date(stop.schArr) : null;
