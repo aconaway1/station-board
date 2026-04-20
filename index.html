@@ -753,7 +753,7 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.4.1 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.5.0 &mdash; &copy; 2026</div>
 
 <!-- Map modal -->
 <div class="map-overlay" id="mapOverlay" style="display:none">
@@ -975,15 +975,15 @@
   }
 
   // ── Timers ──
-  function startCountdown() {
-    timers.deadline = Date.now() + REFRESH_MS;
+  function startCountdown(intervalMs = REFRESH_MS) {
+    timers.deadline = Date.now() + intervalMs;
     clearInterval(timers.countdown);
     timers.countdown = setInterval(() => {
       const remaining = Math.max(0, timers.deadline - Date.now());
       const mins = Math.floor(remaining / 60000);
       const secs = Math.floor((remaining % 60000) / 1000);
       $('nextRefresh').textContent = `NEXT REFRESH IN ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
-      $('progressFill').style.width = ((remaining / REFRESH_MS) * 100) + '%';
+      $('progressFill').style.width = ((remaining / intervalMs) * 100) + '%';
     }, 1000);
   }
 
@@ -1477,9 +1477,11 @@
 
     isFetching = false;
 
-    // Schedule next refresh
-    timers.refresh = setTimeout(fetchAndRender, REFRESH_MS);
-    startCountdown();
+    // Schedule next refresh — use 1-min interval if any live train is arriving soon
+    const hasSoon = lastTrainData && lastTrainData.some(isArrivingSoon);
+    const nextRefresh = hasSoon ? 60 * 1000 : REFRESH_MS;
+    timers.refresh = setTimeout(fetchAndRender, nextRefresh);
+    startCountdown(nextRefresh);
   }
 
   // ── Render ──

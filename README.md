@@ -17,7 +17,7 @@ The app learns train schedules automatically by watching the [Amtraker API](http
 - **Proximity alert** — trains arriving within 10 minutes get a pulsing amber highlight
 - **Railcam link** — when a train is arriving soon, a link to a YouTube railcam search appears automatically
 - **Expandable rows** — click any active train to see its full station-by-station itinerary with schedule deltas
-- **Auto-refresh** — fetches new data every 10 minutes with a visible countdown and progress bar
+- **Auto-refresh** — fetches new data every 10 minutes normally; switches to every 1 minute when any train is arriving within 10 minutes, with a visible countdown and progress bar
 - **Dark aesthetic** — amber-on-black departure board look with scanline overlay, color-coded status badges
 
 ## Quick Start
@@ -94,7 +94,10 @@ Then visit `http://<your-ip>:8080` from any device on the same network.
                               │
                               ▼
                      ┌────────────────────┐
-                     │  Wait 10 minutes   │
+                     │  Wait 10 min       │
+                     │  (1 min if any     │
+                     │  train arriving    │
+                     │  within 10 min)    │
                      │  ─ countdown bar   │
                      │  ─ repeat cycle    │
                      └────────────────────┘
