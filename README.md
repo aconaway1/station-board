@@ -15,7 +15,7 @@ The app learns train schedules automatically by watching the [Amtraker API](http
 - **Live train tracking** — real-time status (on time / late / early), estimated arrivals, nearest station
 - **Satellite map** — click MAP on any active train to see its live position relative to the station (Esri World Imagery + Leaflet)
 - **Proximity alert** — trains arriving within 10 minutes get a pulsing amber highlight
-- **Railcam link** — when a train is arriving soon, a link to a YouTube railcam search appears automatically
+- **Railcam link** — when a train is arriving soon, a link to a saved YouTube railcam appears automatically; saved cams for stops along a train's route also appear inline in the stop list
 - **Expandable rows** — click any active train to see its full station-by-station itinerary with schedule deltas
 - **Auto-refresh** — fetches new data every 10 minutes normally; switches to every 1 minute when any train is arriving within 10 minutes, with a visible countdown and progress bar
 - **Dark aesthetic** — amber-on-black departure board look with scanline overlay, color-coded status badges

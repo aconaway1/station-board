@@ -528,6 +528,8 @@
 
   .detail-stop-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .detail-stop-code { color: var(--muted); font-size: 0.6rem; margin-left: 4px; }
+  .detail-stop-cam { color: var(--amber); font-size: 0.55rem; margin-left: 6px; opacity: 0.7; text-decoration: none; letter-spacing: 0.05em; }
+  .detail-stop-cam:hover { opacity: 1; }
 
   .detail-stop-late { color: var(--red); font-size: 0.6rem; }
   .detail-stop-early { color: var(--blue); font-size: 0.6rem; }
@@ -753,7 +755,7 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.5.0 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.5.1 &mdash; &copy; 2026</div>
 
 <!-- Map modal -->
 <div class="map-overlay" id="mapOverlay" style="display:none">
@@ -914,8 +916,24 @@
     return t.isLive && t.arrivalDate && (t.arrivalDate - new Date()) > 0 && (t.arrivalDate - new Date()) <= ARRIVING_SOON_MS;
   }
 
+  // ── Migrations ──
+  function runMigrations() {
+    if (localStorage.getItem('amtrak_migration_v2')) return;
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith('amtrak_railcam_')) continue;
+      try {
+        const entry = JSON.parse(localStorage.getItem(key));
+        if (entry && entry.url && entry.url.includes('results?search_query=')) {
+          localStorage.removeItem(key);
+        }
+      } catch (e) { /* malformed entry, leave it */ }
+    }
+    localStorage.setItem('amtrak_migration_v2', '1');
+  }
+
   // ── Init ──
   function init() {
+    runMigrations();
     $('stationInput').value = station.code;
     startClock();
     fetchAndRender();
@@ -1070,12 +1088,12 @@
   }
 
   // ── Railcam ──
-  function getRailcamKey() { return `amtrak_railcam_${station.code}`; }
+  function getRailcamKey(code = station.code) { return `amtrak_railcam_${code}`; }
 
-  function loadRailcam() {
+  function loadRailcam(code = station.code) {
     try {
-      const cached = JSON.parse(localStorage.getItem(getRailcamKey()));
-      if (cached && cached.url) return cached.url;
+      const cached = JSON.parse(localStorage.getItem(getRailcamKey(code)));
+      if (cached && cached.url && !cached.url.includes('results?search_query=')) return cached.url;
     } catch (e) {
       console.warn('Failed to load railcam from localStorage:', e);
     }
@@ -1582,9 +1600,11 @@
         else deltaHtml = `<span class="detail-stop-ontime">OT</span>`;
       }
 
+      const stopCam = loadRailcam(stop.code);
+      const camLink = stopCam ? `<a class="detail-stop-cam" href="${escHtml(stopCam)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">&#9654; CAM</a>` : '';
       html += `<div class="detail-stop ${cls}">
         <span></span>
-        <span class="detail-stop-name">${escHtml(stop.name)}<span class="detail-stop-code">${escHtml(stop.code)}</span></span>
+        <span class="detail-stop-name">${escHtml(stop.name)}<span class="detail-stop-code">${escHtml(stop.code)}</span>${camLink}</span>
         <span>${schTimeStr}</span>
         <span>${estTimeStr}</span>
         <span class="detail-stop-delta">${deltaHtml}</span>
