@@ -755,7 +755,7 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.5.1 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.5.2 &mdash; &copy; 2026</div>
 
 <!-- Map modal -->
 <div class="map-overlay" id="mapOverlay" style="display:none">
@@ -1009,6 +1009,12 @@
     clearInterval(timers.rerender);
     timers.rerender = setInterval(() => {
       if (lastTrainData) renderBoard(lastTrainData);
+      // If a train just entered the arriving-soon window, accelerate the next fetch
+      if (lastTrainData && lastTrainData.some(isArrivingSoon) && timers.deadline - Date.now() > 60 * 1000) {
+        clearTimeout(timers.refresh);
+        timers.refresh = setTimeout(fetchAndRender, 60 * 1000);
+        startCountdown(60 * 1000);
+      }
     }, RERENDER_MS);
   }
 
