@@ -19,6 +19,9 @@ The app learns train schedules automatically by watching the [Amtraker API](http
 - **Expandable rows** — click any active train to see its full station-by-station itinerary with schedule deltas
 - **Auto-refresh** — fetches new data every 10 minutes normally; switches to every 1 minute when any train is arriving within 10 minutes, with a visible countdown and progress bar
 - **Dark aesthetic** — amber-on-black departure board look with scanline overlay, color-coded status badges
+- **Clear station data** — a CLEAR DATA button in the station switcher bar wipes the learned schedule, live cache, and railcam for the current station and triggers a fresh fetch; requires a two-click confirmation to prevent accidents
+- **Clear all data** — a subtle footer link clears all stored data across every station and reloads the page; also requires confirmation
+- **Debug panel** — a `debug` footer link opens a fixed panel showing timestamped log output; L1 covers fetch lifecycle, cache hits/misses, and railcam; L2 adds per-train detail and schedule operations; level can be pre-set via `?debug=1` or `?debug=2` in the URL
 
 ## Quick Start
 

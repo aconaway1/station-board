@@ -617,6 +617,107 @@
   }
   .map-btn:hover { background: rgba(245,166,35,0.3); }
 
+  .clear-btn {
+    background: transparent;
+    border: 1px solid rgba(200, 70, 70, 0.35);
+    color: rgba(200, 70, 70, 0.55);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+  .clear-btn:hover {
+    background: rgba(200, 70, 70, 0.1);
+    border-color: rgba(200, 70, 70, 0.7);
+    color: rgba(200, 70, 70, 0.85);
+  }
+  .clear-btn.armed {
+    background: rgba(200, 70, 70, 0.15);
+    border-color: rgb(200, 70, 70);
+    color: rgb(200, 70, 70);
+  }
+
+  .debug-panel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 35vh;
+    background: #070a0d;
+    border-top: 1px solid #1e2a35;
+    display: flex;
+    flex-direction: column;
+    z-index: 900;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+  }
+  .debug-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 12px;
+    border-bottom: 1px solid #1e2a35;
+    flex-shrink: 0;
+  }
+  .debug-toolbar-label {
+    color: var(--muted);
+    letter-spacing: 1px;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    margin-right: 4px;
+  }
+  .debug-level-btn {
+    background: transparent;
+    border: 1px solid #2d3748;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    padding: 2px 7px;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+  }
+  .debug-level-btn.active {
+    border-color: var(--amber);
+    color: var(--amber);
+  }
+  .debug-toolbar-right {
+    margin-left: auto;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .debug-toolbar-action {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    cursor: pointer;
+    opacity: 0.55;
+    letter-spacing: 0.5px;
+    padding: 0;
+  }
+  .debug-toolbar-action:hover { opacity: 1; }
+  .debug-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 12px;
+  }
+  .debug-entry {
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .debug-entry.lvl-1 { color: #607585; }
+  .debug-entry.lvl-2 { color: #3d5060; }
+  .debug-entry.lvl-err { color: rgba(200,70,70,0.85); }
+  .debug-ts { color: #2d3d4a; margin-right: 8px; }
+  .debug-tag { color: rgba(245,166,35,0.55); margin-right: 6px; }
+
   .map-overlay {
     position: fixed;
     inset: 0;
@@ -717,6 +818,8 @@
     <button id="railcamSetupBtn" class="railcam-setup-btn">Set up</button>
     <span class="switcher-divider"></span>
     <button class="map-btn" id="stationMapBtn">INBOUND MAP</button>
+    <span class="switcher-divider"></span>
+    <button class="clear-btn" id="clearStationBtn">CLEAR DATA</button>
   </div>
 
   <!-- Error banner -->
@@ -755,7 +858,26 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.5.2 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.6.0 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding-bottom:0.4rem;">
+  <a id="clearAllBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:#2d3748;letter-spacing:0.05em;text-decoration:none;">clear all data</a>
+</div>
+<div style="text-align:center;padding-bottom:1.2rem;">
+  <a id="debugToggleBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:#2d3748;letter-spacing:0.05em;text-decoration:none;">debug</a>
+</div>
+
+<div id="debugPanel" class="debug-panel" style="display:none;">
+  <div class="debug-toolbar">
+    <span class="debug-toolbar-label">Debug</span>
+    <button class="debug-level-btn" data-level="1">L1</button>
+    <button class="debug-level-btn" data-level="2">L2</button>
+    <div class="debug-toolbar-right">
+      <button class="debug-toolbar-action" id="debugClearLog">CLEAR</button>
+      <button class="debug-toolbar-action" id="debugClose">&times;</button>
+    </div>
+  </div>
+  <div class="debug-log" id="debugLog"></div>
+</div>
 
 <!-- Map modal -->
 <div class="map-overlay" id="mapOverlay" style="display:none">
@@ -826,8 +948,41 @@
   let lastTrainData = null;
   let fetchController = null;
   let isFetching = false;
+  let debugLevel = parseInt(new URLSearchParams(location.search).get('debug') || '0');
 
   const $ = (id) => document.getElementById(id);
+
+  // ── Debug logging ──
+  function dbg(level, tag, msg) {
+    if (level > debugLevel) return;
+    const now = new Date();
+    const ts = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      + '.' + String(now.getMilliseconds()).padStart(3, '0');
+    const logEl = $('debugLog');
+    if (logEl) {
+      const entry = document.createElement('div');
+      entry.className = `debug-entry lvl-${level}`;
+      entry.innerHTML = `<span class="debug-ts">${ts}</span><span class="debug-tag">[${escHtml(tag)}]</span>${escHtml(String(msg))}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    console.log(`[${ts}] [${tag}] ${msg}`);
+  }
+
+  function dbgErr(tag, msg) {
+    const now = new Date();
+    const ts = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      + '.' + String(now.getMilliseconds()).padStart(3, '0');
+    const logEl = $('debugLog');
+    if (logEl) {
+      const entry = document.createElement('div');
+      entry.className = 'debug-entry lvl-err';
+      entry.innerHTML = `<span class="debug-ts">${ts}</span><span class="debug-tag">[${escHtml(tag)}]</span>${escHtml(String(msg))}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    console.error(`[${ts}] [${tag}] ${msg}`);
+  }
 
   // ── Helpers ──
   function escHtml(str) {
@@ -953,6 +1108,7 @@
     const code = $('stationInput').value.trim().toUpperCase();
     if (!code || code.length < 2 || code.length > 4) return;
     if (code === station.code && !isFetching) { /* same station, allow re-fetch */ }
+    dbg(1, 'station', `switching to ${code}`);
     station.code = code;
     railcamUrl = null;
     localStorage.setItem('amtrak_station', code);
@@ -1048,15 +1204,18 @@
 
   function loadSchedule() {
     try {
-      return JSON.parse(localStorage.getItem(getScheduleKey())) || {};
+      const data = JSON.parse(localStorage.getItem(getScheduleKey())) || {};
+      dbg(2, 'schedule', `loaded ${Object.keys(data).length} entries`);
+      return data;
     } catch (e) {
-      console.warn('Failed to load schedule from localStorage:', e);
+      dbgErr('schedule', `load failed: ${e.message}`);
       return {};
     }
   }
 
   function saveSchedule(schedule) {
     localStorage.setItem(getScheduleKey(), JSON.stringify(schedule));
+    dbg(2, 'schedule', `saved ${Object.keys(schedule).length} entries`);
   }
 
   // ── Live cache ──
@@ -1066,19 +1225,22 @@
     try {
       const serializable = rows.map(r => ({ ...r, arrivalDate: r.arrivalDate.getTime() }));
       localStorage.setItem(getLiveCacheKey(), JSON.stringify({ ts: Date.now(), rows: serializable }));
+      dbg(2, 'cache', `live saved ${rows.length} rows`);
     } catch (e) {
-      console.warn('Failed to save live cache:', e);
+      dbgErr('cache', `live save failed: ${e.message}`);
     }
   }
 
   function loadLiveCache() {
     try {
       const raw = localStorage.getItem(getLiveCacheKey());
-      if (!raw) return null;
+      if (!raw) { dbg(1, 'cache', 'live miss'); return null; }
       const { ts, rows } = JSON.parse(raw);
+      const ageSec = Math.round((Date.now() - ts) / 1000);
+      dbg(1, 'cache', `live hit, age ${ageSec}s, ${rows.length} rows`);
       return { ts, rows: rows.map(r => ({ ...r, arrivalDate: new Date(r.arrivalDate) })) };
     } catch (e) {
-      console.warn('Failed to load live cache:', e);
+      dbgErr('cache', `live load failed: ${e.message}`);
       return null;
     }
   }
@@ -1099,10 +1261,14 @@
   function loadRailcam(code = station.code) {
     try {
       const cached = JSON.parse(localStorage.getItem(getRailcamKey(code)));
-      if (cached && cached.url && !cached.url.includes('results?search_query=')) return cached.url;
+      if (cached && cached.url && !cached.url.includes('results?search_query=')) {
+        dbg(1, 'railcam', `cache hit for ${code}`);
+        return cached.url;
+      }
     } catch (e) {
-      console.warn('Failed to load railcam from localStorage:', e);
+      dbgErr('railcam', `load failed: ${e.message}`);
     }
+    dbg(1, 'railcam', `no cache for ${code}`);
     return null;
   }
 
@@ -1379,6 +1545,7 @@
       if (refRun && refStop) upsertSchedule(schedule, num, refRun, refStop, today);
 
       if (bestRun && bestStop) {
+        dbg(2, `train ${num}`, `live — enroute near ${bestRun.eventName || '?'}`);
         displayRows.push(buildLiveTrainRow(num, bestRun, bestStop, schedule));
       } else {
         const sch = schedule[num];
@@ -1390,7 +1557,10 @@
             const now = new Date();
             label = parsedArr.toLocaleDateString('en-US', { timeZone: station.tz }) !== now.toLocaleDateString('en-US', { timeZone: station.tz }) ? 'TOMORROW' : 'SCHEDULED';
           }
+          dbg(2, `train ${num}`, `scheduled @ ${sch.schArr} (${label})`);
           displayRows.push(buildScheduledTrainRow(num, sch, label));
+        } else {
+          dbg(2, `train ${num}`, `skipped — no active run and no schedule entry`);
         }
       }
     }
@@ -1442,6 +1612,9 @@
     dot.classList.add('loading');
     hideError();
 
+    const fetchStart = Date.now();
+    dbg(1, 'fetch', `starting for ${station.code}`);
+
     try {
       const stationData = await fetchStation(signal);
       if (!stationData) throw new Error('Station not found');
@@ -1451,9 +1624,13 @@
 
       const runIds = stationData.trains || [];
       const trainNums = [...new Set(runIds.map(id => id.split('-')[0]))];
+      dbg(1, 'fetch', `station ok, ${trainNums.length} train(s): ${trainNums.join(', ')}`);
+
       const trainResults = await Promise.all(trainNums.map(num => fetchTrain(num, signal)));
 
       const displayRows = processTrainData(trainNums, trainResults);
+      const live = displayRows.filter(r => r.isLive).length;
+      dbg(1, 'fetch', `done in ${Date.now() - fetchStart}ms — ${displayRows.length} rows (${live} live, ${displayRows.length - live} scheduled)`);
 
       lastTrainData = displayRows;
       saveLiveCache(displayRows);
@@ -1468,7 +1645,7 @@
 
     } catch (err) {
       if (err.name === 'AbortError') { isFetching = false; return; }
-      console.error('Fetch error:', err);
+      dbgErr('fetch', `error: ${err.message}`);
       dot.classList.remove('loading');
       // If header is still "LOADING…", show the station code instead
       if ($('stationName').textContent === 'LOADING…') {
@@ -1478,7 +1655,7 @@
       }
       showError(`Failed to fetch data: ${err.message}`);
       if (err.message === 'Station not found') {
-        showStationSuggestions(station.code).catch(e => console.warn('Suggestion lookup failed:', e));
+        showStationSuggestions(station.code).catch(e => dbgErr('suggestions', e.message));
       }
 
       const liveCache = loadLiveCache();
@@ -1776,6 +1953,78 @@
   }
 
   $('stationMapBtn').addEventListener('click', showStationMap);
+
+  let clearArmTimer = null;
+  $('clearStationBtn').addEventListener('click', () => {
+    const btn = $('clearStationBtn');
+    if (btn.classList.contains('armed')) {
+      clearTimeout(clearArmTimer);
+      localStorage.removeItem(getScheduleKey());
+      localStorage.removeItem(getLiveCacheKey());
+      localStorage.removeItem(getRailcamKey());
+      btn.classList.remove('armed');
+      btn.textContent = 'CLEAR DATA';
+      switchStation();
+    } else {
+      btn.classList.add('armed');
+      btn.textContent = 'CONFIRM?';
+      clearArmTimer = setTimeout(() => {
+        btn.classList.remove('armed');
+        btn.textContent = 'CLEAR DATA';
+      }, 3000);
+    }
+  });
+  function syncDebugLevelButtons() {
+    document.querySelectorAll('.debug-level-btn').forEach(b => {
+      b.classList.toggle('active', parseInt(b.dataset.level) <= debugLevel);
+    });
+  }
+
+  $('debugToggleBtn').addEventListener('click', (e) => {
+    e.preventDefault();
+    const panel = $('debugPanel');
+    const opening = panel.style.display === 'none';
+    panel.style.display = opening ? 'flex' : 'none';
+    if (opening && debugLevel === 0) {
+      debugLevel = 1;
+      syncDebugLevelButtons();
+    }
+  });
+
+  $('debugClose').addEventListener('click', () => { $('debugPanel').style.display = 'none'; });
+
+  $('debugClearLog').addEventListener('click', () => { $('debugLog').innerHTML = ''; });
+
+  document.querySelectorAll('.debug-level-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const level = parseInt(btn.dataset.level);
+      debugLevel = debugLevel === level ? 0 : level;
+      syncDebugLevelButtons();
+    });
+  });
+
+  let clearAllArmTimer = null;
+  $('clearAllBtn').addEventListener('click', (e) => {
+    e.preventDefault();
+    const link = $('clearAllBtn');
+    if (link.dataset.armed === '1') {
+      clearTimeout(clearAllArmTimer);
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith('amtrak_')) localStorage.removeItem(key);
+      }
+      location.reload();
+    } else {
+      link.dataset.armed = '1';
+      link.textContent = 'confirm? (clears all stations)';
+      link.style.color = 'rgba(200,70,70,0.7)';
+      clearAllArmTimer = setTimeout(() => {
+        link.dataset.armed = '';
+        link.textContent = 'clear all data';
+        link.style.color = '#2d3748';
+      }, 3000);
+    }
+  });
+
   $('mapClose').addEventListener('click', closeMap);
   $('mapOverlay').addEventListener('click', (e) => {
     if (e.target === $('mapOverlay')) closeMap();
