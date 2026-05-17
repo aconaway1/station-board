@@ -858,7 +858,7 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.6.0 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.6.1 &mdash; &copy; 2026</div>
 <div style="text-align:center;padding-bottom:0.4rem;">
   <a id="clearAllBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:#2d3748;letter-spacing:0.05em;text-decoration:none;">clear all data</a>
 </div>
@@ -1566,9 +1566,17 @@
     }
 
     // Add cached trains not in the current API response
+    const STALE_DAYS = 7;
     for (const num of Object.keys(schedule)) {
       if (!trainNums.includes(num)) {
         const sch = schedule[num];
+        const daysSinceLastSeen = sch?.lastSeen
+          ? Math.floor((Date.now() - new Date(sch.lastSeen).getTime()) / 86400000)
+          : Infinity;
+        if (daysSinceLastSeen > STALE_DAYS) {
+          delete schedule[num];
+          continue;
+        }
         if (sch && sch.schArr) {
           const parsedArr = parseScheduledTime(sch.schArr, station.tz);
           const now = new Date();
@@ -1717,6 +1725,7 @@
         <div>
           <span class="status-badge ${t.statusClass}">${escHtml(t.status)}</span>
           ${t.trainLat != null ? `<button class="map-btn" data-map-idx="${idx}">MAP</button>` : ''}
+          ${!t.isLive ? `<button class="clear-btn remove-btn" data-remove-num="${escHtml(t.trainNum)}">REMOVE</button>` : ''}
         </div>
       </div>
       ${hasStations(t) ? `<div class="detail-panel${openPanels.has(t.trainNum) ? ' open' : ''}" id="detail-${idx}" data-train="${t.trainNum}">${renderDetailPanel(t)}</div>` : ''}
@@ -1725,7 +1734,7 @@
     // Attach click handlers for expandable rows
     $('boardBody').querySelectorAll('.board-row.expandable').forEach(row => {
       row.addEventListener('click', (e) => {
-        if (e.target.closest('.map-btn')) return;
+        if (e.target.closest('.map-btn') || e.target.closest('.remove-btn')) return;
         const panelId = row.getAttribute('data-detail');
         const panel = document.getElementById(panelId);
         if (panel) panel.classList.toggle('open');
@@ -1739,6 +1748,30 @@
         const idx = parseInt(btn.getAttribute('data-map-idx'));
         const t = trains[idx];
         if (t && t.trainLat != null) showTrainMap(t);
+      });
+    });
+
+    // Attach click handlers for remove buttons
+    $('boardBody').querySelectorAll('.remove-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (btn.classList.contains('armed')) {
+          const num = btn.getAttribute('data-remove-num');
+          const schedule = loadSchedule();
+          delete schedule[num];
+          saveSchedule(schedule);
+          lastTrainData = (lastTrainData || []).filter(t => t.trainNum !== num);
+          renderBoard(lastTrainData);
+        } else {
+          btn.classList.add('armed');
+          btn.textContent = 'CONFIRM?';
+          setTimeout(() => {
+            if (btn.isConnected) {
+              btn.classList.remove('armed');
+              btn.textContent = 'REMOVE';
+            }
+          }, 3000);
+        }
       });
     });
 
