@@ -858,7 +858,7 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.6.1 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.6.2 &mdash; &copy; 2026</div>
 <div style="text-align:center;padding-bottom:0.4rem;">
   <a id="clearAllBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:#2d3748;letter-spacing:0.05em;text-decoration:none;">clear all data</a>
 </div>
@@ -1430,6 +1430,70 @@
     return runs.length ? runs : null;
   }
 
+  const TD_BASE = 'https://asm-backend.transitdocs.com';
+
+  function tdTrainToRun(train) {
+    return {
+      trainID: `${train.number}-${train.origin_date}`,
+      routeName: train.name,
+      destCode: train.destination,
+      destName: train.destination,
+      origCode: train.origin,
+      origName: train.origin,
+      lat: train.location?.latitude,
+      lon: train.location?.longitude,
+      heading: train.location?.heading,
+      velocity: train.location?.speed,
+      eventName: null,
+      stations: (train.stops || []).map(stop => {
+        const schArr = stop.sched_arrive ? new Date(stop.sched_arrive * 1000).toISOString() : null;
+        const schDep = stop.sched_depart ? new Date(stop.sched_depart * 1000).toISOString() : null;
+        const estArr = stop.sched_arrive && stop.arrive?.variance != null
+          ? new Date((stop.sched_arrive + stop.arrive.variance) * 1000).toISOString() : schArr;
+        const estDep = stop.sched_depart && stop.depart?.variance != null
+          ? new Date((stop.sched_depart + stop.depart.variance) * 1000).toISOString() : schDep;
+        let status = 'Enroute';
+        if (stop.depart?.type === 'ACTUAL') status = 'Departed';
+        else if (stop.arrive?.type === 'ACTUAL') status = 'Station';
+        return { code: stop.code, status, schArr, schDep, arr: estArr, dep: estDep };
+      })
+    };
+  }
+
+  async function fetchTransitdocs(signal) {
+    const [stResp, infoResp] = await Promise.all([
+      fetch(`${TD_BASE}/station/${station.code}`, { signal }),
+      fetch(`${TD_BASE}/stationInfo`, { signal })
+    ]);
+    if (!stResp.ok) throw new Error(stResp.status === 404 ? 'Station not found' : `TransitDocs API returned ${stResp.status}`);
+    const tdStation = await stResp.json();
+
+    const stationData = { code: station.code, tz: station.tz || 'America/Chicago', lat: station.lat, lon: station.lon };
+    if (infoResp.ok) {
+      const infoList = await infoResp.json();
+      const info = infoList.find(s => s.code === station.code);
+      if (info) {
+        stationData.tz = info.timezone || stationData.tz;
+        stationData.lat = info.latitude;
+        stationData.lon = info.longitude;
+        stationData.name = info.city || station.code;
+        stationData.city = info.city;
+        stationData.state = info.state;
+      }
+    }
+
+    const allTrains = [...(tdStation.incoming || []), ...(tdStation.passed || [])];
+    const byNum = {};
+    for (const train of allTrains) {
+      const num = String(train.number);
+      if (!byNum[num]) byNum[num] = [];
+      byNum[num].push(tdTrainToRun(train));
+    }
+    const trainNums = Object.keys(byNum);
+    const trainResults = trainNums.map(num => byNum[num]);
+    return { stationData, trainNums, trainResults };
+  }
+
   // ── Data processing (extracted from fetchAndRender) ──
   function findBestRun(runs) {
     let bestRun = null, bestStop = null, bestArrival = Infinity;
@@ -1624,17 +1688,27 @@
     dbg(1, 'fetch', `starting for ${station.code}`);
 
     try {
-      const stationData = await fetchStation(signal);
-      if (!stationData) throw new Error('Station not found');
+      let stationData, trainNums, trainResults;
+      const amtrakerTimeout = new AbortController();
+      const amtrakerTimeoutId = setTimeout(() => amtrakerTimeout.abort(), 15000);
+      try {
+        stationData = await fetchStation(amtrakerTimeout.signal);
+        if (!stationData) throw new Error('Station not found');
+        const runIds = stationData.trains || [];
+        trainNums = [...new Set(runIds.map(id => id.split('-')[0]))];
+        trainResults = await Promise.all(trainNums.map(num => fetchTrain(num, amtrakerTimeout.signal)));
+        clearTimeout(amtrakerTimeoutId);
+        dbg(1, 'fetch', `amtraker ok, ${trainNums.length} train(s): ${trainNums.join(', ')}`);
+      } catch (primaryErr) {
+        clearTimeout(amtrakerTimeoutId);
+        if (signal.aborted) throw primaryErr;
+        dbg(1, 'fetch', `amtraker failed (${primaryErr.message}), trying transitdocs`);
+        ({ stationData, trainNums, trainResults } = await fetchTransitdocs(signal));
+        dbg(1, 'fetch', `transitdocs ok, ${trainNums.length} train(s): ${trainNums.join(', ')}`);
+      }
 
       updateHeader(stationData);
       initRailcam(stationData.name || station.code);
-
-      const runIds = stationData.trains || [];
-      const trainNums = [...new Set(runIds.map(id => id.split('-')[0]))];
-      dbg(1, 'fetch', `station ok, ${trainNums.length} train(s): ${trainNums.join(', ')}`);
-
-      const trainResults = await Promise.all(trainNums.map(num => fetchTrain(num, signal)));
 
       const displayRows = processTrainData(trainNums, trainResults);
       const live = displayRows.filter(r => r.isLive).length;
