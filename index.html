@@ -858,7 +858,7 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.6.2 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.6.3 &mdash; &copy; 2026</div>
 <div style="text-align:center;padding-bottom:0.4rem;">
   <a id="clearAllBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:#2d3748;letter-spacing:0.05em;text-decoration:none;">clear all data</a>
 </div>
@@ -920,12 +920,21 @@
   const ARRIVING_SOON_MS = 10 * 60 * 1000;
 
   // ── Grouped state ──
+  function getStationMetaKey(code) { return `amtrak_meta_${code}`; }
+  function loadStationMeta(code) {
+    try { return JSON.parse(localStorage.getItem(getStationMetaKey(code))) || {}; } catch { return {}; }
+  }
+  function saveStationMeta() {
+    localStorage.setItem(getStationMetaKey(station.code), JSON.stringify({ tz: station.tz, lat: station.lat, lon: station.lon, name: station.name }));
+  }
+
+  const _stationMeta = loadStationMeta(localStorage.getItem('amtrak_station') || 'GBB');
   const station = {
     code: localStorage.getItem('amtrak_station') || 'GBB',
-    tz: 'America/Chicago',
-    lat: null,
-    lon: null,
-    name: ''
+    tz: _stationMeta.tz || 'America/Chicago',
+    lat: _stationMeta.lat || null,
+    lon: _stationMeta.lon || null,
+    name: _stationMeta.name || ''
   };
 
   const timers = {
@@ -1110,6 +1119,11 @@
     if (code === station.code && !isFetching) { /* same station, allow re-fetch */ }
     dbg(1, 'station', `switching to ${code}`);
     station.code = code;
+    const newMeta = loadStationMeta(code);
+    station.tz = newMeta.tz || 'America/Chicago';
+    station.lat = newMeta.lat || null;
+    station.lon = newMeta.lon || null;
+    station.name = newMeta.name || '';
     railcamUrl = null;
     localStorage.setItem('amtrak_station', code);
     $('stationName').textContent = 'LOADING…';
@@ -1164,7 +1178,7 @@
   function startRerender() {
     clearInterval(timers.rerender);
     timers.rerender = setInterval(() => {
-      if (lastTrainData) renderBoard(lastTrainData);
+      if (lastTrainData) renderBoard(refreshRows(lastTrainData));
       // If a train just entered the arriving-soon window, accelerate the next fetch
       if (lastTrainData && lastTrainData.some(isArrivingSoon) && timers.deadline - Date.now() > 60 * 1000) {
         clearTimeout(timers.refresh);
@@ -1216,6 +1230,21 @@
   function saveSchedule(schedule) {
     localStorage.setItem(getScheduleKey(), JSON.stringify(schedule));
     dbg(2, 'schedule', `saved ${Object.keys(schedule).length} entries`);
+  }
+
+  // Bump past arrival times to tomorrow and re-sort. Live trains get a 30-min grace period
+  // (time to arrive and depart); scheduled entries get none since they're just cached times.
+  const PAST_GRACE_MS = 30 * 60 * 1000;
+  function refreshRows(rows) {
+    const now = new Date();
+    return rows
+      .map(t => {
+        const grace = t.isLive ? PAST_GRACE_MS : 0;
+        if (now.getTime() - t.arrivalDate.getTime() <= grace) return t;
+        const bumped = new Date(t.arrivalDate.getTime() + 24 * 60 * 60 * 1000);
+        return { ...t, arrivalDate: bumped, dateLabel: 'TOMORROW' };
+      })
+      .sort((a, b) => a.arrivalDate - b.arrivalDate);
   }
 
   // ── Live cache ──
@@ -1659,6 +1688,8 @@
     station.tz = stationData.tz || 'America/Chicago';
     station.lat = stationData.lat;
     station.lon = stationData.lon;
+    station.name = stationData.name || station.code;
+    saveStationMeta();
     $('stationName').textContent = (stationData.name || station.code).toUpperCase();
     const metaParts = [stationData.code];
     if (stationData.address1 && stationData.address1.trim()) metaParts.push(stationData.address1.trim());
@@ -1974,10 +2005,13 @@
     marker.bindPopup(makeTrainPopup(t));
     mapState.markers[t.trainNum] = marker;
 
-    L.marker([station.lat, station.lon], { icon: makeStationIcon() }).addTo(mapState.instance);
-
-    const bounds = L.latLngBounds([[t.trainLat, t.trainLon], [station.lat, station.lon]]);
-    mapState.instance.fitBounds(bounds, { padding: [50, 50] });
+    if (station.lat != null && station.lon != null) {
+      L.marker([station.lat, station.lon], { icon: makeStationIcon() }).addTo(mapState.instance);
+      const bounds = L.latLngBounds([[t.trainLat, t.trainLon], [station.lat, station.lon]]);
+      mapState.instance.fitBounds(bounds, { padding: [50, 50] });
+    } else {
+      mapState.instance.setView([t.trainLat, t.trainLon], 13);
+    }
   }
 
   async function showStationMap() {
@@ -1993,8 +2027,10 @@
 
     initMap();
 
-    const points = [[station.lat, station.lon]];
-    L.marker([station.lat, station.lon], { icon: makeStationIcon() }).addTo(mapState.instance);
+    const points = station.lat != null && station.lon != null ? [[station.lat, station.lon]] : [];
+    if (station.lat != null && station.lon != null) {
+      L.marker([station.lat, station.lon], { icon: makeStationIcon() }).addTo(mapState.instance);
+    }
 
     for (const t of activeTrains) {
       const marker = L.marker([t.trainLat, t.trainLon], { icon: makeTrainIcon(t) }).addTo(mapState.instance);
