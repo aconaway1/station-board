@@ -1721,7 +1721,7 @@
     try {
       let stationData, trainNums, trainResults;
       const amtrakerTimeout = new AbortController();
-      const amtrakerTimeoutId = setTimeout(() => amtrakerTimeout.abort(), 15000);
+      const amtrakerTimeoutId = setTimeout(() => amtrakerTimeout.abort(), 5000);
       try {
         stationData = await fetchStation(amtrakerTimeout.signal);
         if (!stationData) throw new Error('Station not found');
@@ -1774,16 +1774,15 @@
       const liveCache = loadLiveCache();
       if (liveCache && liveCache.rows.length) {
         lastTrainData = liveCache.rows;
-        renderBoard(liveCache.rows);
+        renderBoard(refreshRows(liveCache.rows));
         updateOpenMap(liveCache.rows);
         startRerender();
         setStale(liveCache.ts);
       } else {
         const schedule = loadSchedule();
-        const cached = Object.entries(schedule)
+        const cached = refreshRows(Object.entries(schedule)
           .filter(([, sch]) => sch && sch.schArr)
-          .map(([num, sch]) => buildScheduledTrainRow(num, sch, 'CACHED'));
-        cached.sort((a, b) => a.arrivalDate - b.arrivalDate);
+          .map(([num, sch]) => buildScheduledTrainRow(num, sch, 'CACHED')));
         if (cached.length) renderBoard(cached);
         else $('boardBody').innerHTML = '<div class="empty-state">No schedule data yet. Waiting for first successful fetch…</div>';
       }
