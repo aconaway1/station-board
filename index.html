@@ -634,6 +634,25 @@
     border-color: rgba(200, 70, 70, 0.7);
     color: rgba(200, 70, 70, 0.85);
   }
+  .alert-btn {
+    background: transparent;
+    border: 1px solid rgba(74, 85, 104, 0.6);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+  .alert-btn:hover { border-color: rgba(74, 85, 104, 0.9); }
+  .alert-btn.active {
+    background: rgba(57, 217, 138, 0.12);
+    border-color: var(--green);
+    color: var(--green);
+  }
+
   .clear-btn.armed {
     background: rgba(200, 70, 70, 0.15);
     border-color: rgb(200, 70, 70);
@@ -820,6 +839,8 @@
     <button class="map-btn" id="stationMapBtn">INBOUND MAP</button>
     <span class="switcher-divider"></span>
     <button class="clear-btn" id="clearStationBtn">CLEAR DATA</button>
+    <span class="switcher-divider"></span>
+    <button class="alert-btn" id="alertToggleBtn" title="Notify when a train is arriving soon">ALERTS: OFF</button>
   </div>
 
   <!-- Error banner -->
@@ -858,7 +879,7 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.6.3 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.7.0 &mdash; &copy; 2026</div>
 <div style="text-align:center;padding-bottom:0.4rem;">
   <a id="clearAllBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:#2d3748;letter-spacing:0.05em;text-decoration:none;">clear all data</a>
 </div>
@@ -957,6 +978,8 @@
   let lastTrainData = null;
   let fetchController = null;
   let isFetching = false;
+  let alertsEnabled = localStorage.getItem('amtrak_alerts_enabled') === '1';
+  const alertedTrainIds = new Set();
   let debugLevel = parseInt(new URLSearchParams(location.search).get('debug') || '0');
 
   const $ = (id) => document.getElementById(id);
@@ -1080,6 +1103,28 @@
     return t.isLive && t.arrivalDate && (t.arrivalDate - new Date()) > 0 && (t.arrivalDate - new Date()) <= ARRIVING_SOON_MS;
   }
 
+  function checkArrivalAlerts(trains) {
+    if (!alertsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const stillSoon = new Set();
+    trains.forEach(t => {
+      if (!isArrivingSoon(t)) return;
+      stillSoon.add(t.trainNum);
+      if (alertedTrainIds.has(t.trainNum)) return;
+      alertedTrainIds.add(t.trainNum);
+      const mins = Math.round((t.arrivalDate - new Date()) / 60000);
+      try {
+        new Notification(`Train ${t.trainNum} arriving soon`, {
+          body: `${t.route} — ${mins} min to ${station.name || station.code}`,
+          tag: `amtrak-arrival-${t.trainNum}`
+        });
+      } catch (e) { dbg(1, 'alerts', `notification failed: ${e.message}`); }
+    });
+    // allow re-alerting if a train re-enters the window later (e.g. after a delay update)
+    for (const id of alertedTrainIds) {
+      if (!stillSoon.has(id)) alertedTrainIds.delete(id);
+    }
+  }
+
   // ── Migrations ──
   function runMigrations() {
     if (localStorage.getItem('amtrak_migration_v2')) return;
@@ -1125,6 +1170,7 @@
     station.lon = newMeta.lon || null;
     station.name = newMeta.name || '';
     railcamUrl = null;
+    alertedTrainIds.clear();
     localStorage.setItem('amtrak_station', code);
     $('stationName').textContent = 'LOADING…';
     $('stationMeta').textContent = '';
@@ -1799,6 +1845,7 @@
 
   // ── Render ──
   function renderBoard(trains) {
+    checkArrivalAlerts(trains);
     if (!trains.length) {
       $('boardBody').innerHTML = '<div class="empty-state">No trains found. The schedule will build up over time as trains are observed.</div>';
       return;
@@ -2164,6 +2211,42 @@
         link.textContent = 'clear all data';
         link.style.color = '#2d3748';
       }, 3000);
+    }
+  });
+
+  function syncAlertToggleBtn() {
+    const btn = $('alertToggleBtn');
+    btn.textContent = `ALERTS: ${alertsEnabled ? 'ON' : 'OFF'}`;
+    btn.classList.toggle('active', alertsEnabled);
+  }
+  if (alertsEnabled && (typeof Notification === 'undefined' || Notification.permission !== 'granted')) {
+    // permission was revoked outside the app since it was last enabled here
+    alertsEnabled = false;
+    localStorage.setItem('amtrak_alerts_enabled', '0');
+  }
+  syncAlertToggleBtn();
+
+  $('alertToggleBtn').addEventListener('click', () => {
+    if (!alertsEnabled) {
+      if (typeof Notification === 'undefined') {
+        dbg(1, 'alerts', 'Notification API unavailable in this browser');
+        return;
+      }
+      if (Notification.permission === 'denied') {
+        dbg(1, 'alerts', 'notification permission denied; enable it in browser site settings');
+        return;
+      }
+      Notification.requestPermission().then((perm) => {
+        if (perm !== 'granted') return;
+        alertsEnabled = true;
+        localStorage.setItem('amtrak_alerts_enabled', '1');
+        syncAlertToggleBtn();
+        if (lastTrainData) checkArrivalAlerts(lastTrainData);
+      });
+    } else {
+      alertsEnabled = false;
+      localStorage.setItem('amtrak_alerts_enabled', '0');
+      syncAlertToggleBtn();
     }
   });
 
