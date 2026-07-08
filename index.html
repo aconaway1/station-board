@@ -879,7 +879,7 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.7.0 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.7.1 &mdash; &copy; 2026</div>
 <div style="text-align:center;padding-bottom:0.4rem;">
   <a id="clearAllBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:#2d3748;letter-spacing:0.05em;text-decoration:none;">clear all data</a>
 </div>
@@ -1103,12 +1103,17 @@
     return t.isLive && t.arrivalDate && (t.arrivalDate - new Date()) > 0 && (t.arrivalDate - new Date()) <= ARRIVING_SOON_MS;
   }
 
-  function checkArrivalAlerts(trains) {
+  function checkArrivalAlerts(trains, fresh) {
     if (!alertsEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     const stillSoon = new Set();
     trains.forEach(t => {
       if (!isArrivingSoon(t)) return;
       stillSoon.add(t.trainNum);
+      // Only alert off a freshly-fetched ETA — the 30s re-render tick recomputes
+      // this countdown from a cached snapshot that can be stale by up to REFRESH_MS,
+      // so a train's delay may have changed since it was captured. Wait for the next
+      // real fetch (accelerated to 60s once a train is in-window) to confirm before alerting.
+      if (!fresh) return;
       if (alertedTrainIds.has(t.trainNum)) return;
       alertedTrainIds.add(t.trainNum);
       const mins = Math.round((t.arrivalDate - new Date()) / 60000);
@@ -1794,7 +1799,7 @@
       lastTrainData = displayRows;
       saveLiveCache(displayRows);
       clearStale();
-      renderBoard(displayRows);
+      renderBoard(displayRows, true);
       updateOpenMap(displayRows);
       startRerender();
 
@@ -1844,8 +1849,8 @@
   }
 
   // ── Render ──
-  function renderBoard(trains) {
-    checkArrivalAlerts(trains);
+  function renderBoard(trains, fresh) {
+    checkArrivalAlerts(trains, fresh);
     if (!trains.length) {
       $('boardBody').innerHTML = '<div class="empty-state">No trains found. The schedule will build up over time as trains are observed.</div>';
       return;
