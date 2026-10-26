@@ -951,7 +951,7 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--faint);letter-spacing:0.05em;">Station Board v1.9.0 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--faint);letter-spacing:0.05em;">Station Board v1.9.1 &mdash; &copy; 2026</div>
 <div style="text-align:center;padding-bottom:0.4rem;">
   <a id="clearAllBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:var(--faint);letter-spacing:0.05em;text-decoration:none;">clear all data</a>
 </div>
@@ -1012,6 +1012,8 @@
   const RERENDER_MS = 30000;
   const ARRIVING_SOON_MS = 10 * 60 * 1000;
   const FEED_STALE_MS = 15 * 60 * 1000;   // whole feed hasn't produced new data
+  const TD_TIMEOUT_MS = 10 * 1000;
+  const OFFLINE_RETRY_MS = 2 * 60 * 1000; // retry interval while both APIs are down
   const TRAIN_STALE_MS = 20 * 60 * 1000;  // a single train's GPS hasn't updated
 
   // ── Grouped state ──
@@ -1052,6 +1054,7 @@
   let dataAsOf = null;      // ms: when the source last produced the data on screen
   let dataSource = '';
   let fetchFailed = false;
+  let scheduleOnly = false; // APIs down and no cached live data: showing learned times only
   let lastTrainData = null;
   let fetchController = null;
   let isFetching = false;
@@ -1291,14 +1294,14 @@
   }
 
   // ── Timers ──
-  function startCountdown(intervalMs = REFRESH_MS) {
+  function startCountdown(intervalMs = REFRESH_MS, label = 'NEXT REFRESH IN') {
     timers.deadline = Date.now() + intervalMs;
     clearInterval(timers.countdown);
     timers.countdown = setInterval(() => {
       const remaining = Math.max(0, timers.deadline - Date.now());
       const mins = Math.floor(remaining / 60000);
       const secs = Math.floor((remaining % 60000) / 1000);
-      $('nextRefresh').textContent = `NEXT REFRESH IN ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
+      $('nextRefresh').textContent = `${label} ${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
       $('progressFill').style.width = ((remaining / intervalMs) * 100) + '%';
     }, 1000);
   }
@@ -1311,7 +1314,7 @@
       if (lastTrainData && lastTrainData.some(isArrivingSoon) && timers.deadline - Date.now() > 60 * 1000) {
         clearTimeout(timers.refresh);
         timers.refresh = setTimeout(fetchAndRender, 60 * 1000);
-        startCountdown(60 * 1000);
+        startCountdown(60 * 1000, (fetchFailed || scheduleOnly) ? 'RETRY IN' : 'NEXT REFRESH IN');
       }
     }, RERENDER_MS);
   }
@@ -1420,11 +1423,18 @@
   }
 
   function isDataStale() {
+    if (scheduleOnly) return true;
     if (dataAsOf == null) return false;
     return fetchFailed || Date.now() - dataAsOf > FEED_STALE_MS;
   }
 
   function updateStaleness() {
+    if (scheduleOnly) {
+      document.body.classList.add('stale');
+      $('lastUpdated').textContent = 'OFFLINE — SCHEDULED TIMES ONLY';
+      $('staleBanner').textContent = '⚠ NO LIVE DATA. Train APIs are unreachable — showing the learned schedule only. Trains may be late or not running.';
+      return;
+    }
     if (dataAsOf == null) { document.body.classList.remove('stale'); return; }
     const stale = isDataStale();
     document.body.classList.toggle('stale', stale);
@@ -1444,6 +1454,7 @@
   function clearStale() {
     dataAsOf = null;
     fetchFailed = false;
+    scheduleOnly = false;
     document.body.classList.remove('stale');
   }
 
@@ -1653,7 +1664,27 @@
     };
   }
 
+  // Wraps the TransitDocs fetch with its own timeout. Throws a plain Error (not AbortError)
+  // on timeout so fetchAndRender treats it as a failure rather than a cancelled request.
   async function fetchTransitdocs(signal) {
+    const ctrl = new AbortController();
+    let timedOut = false;
+    const onAbort = () => ctrl.abort();
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+    const tid = setTimeout(() => { timedOut = true; ctrl.abort(); }, TD_TIMEOUT_MS);
+    try {
+      return await fetchTransitdocsData(ctrl.signal);
+    } catch (e) {
+      if (timedOut) throw new Error(`TransitDocs timed out after ${TD_TIMEOUT_MS / 1000}s`);
+      throw e;
+    } finally {
+      clearTimeout(tid);
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  async function fetchTransitdocsData(signal) {
     const [stResp, infoResp] = await Promise.all([
       fetch(`${TD_BASE}/station/${station.code}`, { signal }),
       fetch(`${TD_BASE}/stationInfo`, { signal })
@@ -1882,6 +1913,7 @@
     hideError();
 
     const fetchStart = Date.now();
+    let failed = false;
     dbg(1, 'fetch', `starting for ${station.code}`);
 
     try {
@@ -1937,6 +1969,7 @@
       dataAsOf = feedTs;
       dataSource = source;
       fetchFailed = false;
+      scheduleOnly = false;
       saveLiveCache(displayRows);
       updateStaleness();
       // Don't fire arrival alerts off a frozen feed
@@ -1947,6 +1980,7 @@
 
     } catch (err) {
       if (err.name === 'AbortError') { isFetching = false; return; }
+      failed = true;
       dbgErr('fetch', `error: ${err.message}`);
       dot.classList.remove('loading');
       // If header is still "LOADING…", show the station code instead
@@ -1969,24 +2003,35 @@
         dataAsOf = liveCache.dataAsOf;
         dataSource = liveCache.dataSource;
         fetchFailed = true;
+        scheduleOnly = false;
         updateStaleness();
       } else {
         const schedule = loadSchedule();
         const cached = refreshRows(Object.entries(schedule)
           .filter(([, sch]) => sch && sch.schArr)
           .map(([num, sch]) => buildScheduledTrainRow(num, sch, 'CACHED')));
-        if (cached.length) renderBoard(cached);
-        else $('boardBody').innerHTML = '<div class="empty-state">No schedule data yet. Waiting for first successful fetch…</div>';
+        // Drop any rows left over from a previously viewed station
+        lastTrainData = cached.length ? cached : null;
+        if (cached.length) {
+          renderBoard(cached);
+          startRerender();
+          scheduleOnly = true;
+          updateStaleness();
+        } else {
+          $('lastUpdated').textContent = 'OFFLINE — NO DATA YET';
+          $('boardBody').innerHTML = '<div class="empty-state">No schedule data yet. Waiting for first successful fetch…</div>';
+        }
       }
     }
 
     isFetching = false;
 
-    // Schedule next refresh — use 1-min interval if any live train is arriving soon
+    // Schedule next refresh: 1 min if a live train is arriving soon, 2 min while the APIs are down
     const hasSoon = lastTrainData && lastTrainData.some(isArrivingSoon);
-    const nextRefresh = hasSoon ? 60 * 1000 : REFRESH_MS;
+    let nextRefresh = failed ? OFFLINE_RETRY_MS : REFRESH_MS;
+    if (hasSoon) nextRefresh = Math.min(nextRefresh, 60 * 1000);
     timers.refresh = setTimeout(fetchAndRender, nextRefresh);
-    startCountdown(nextRefresh);
+    startCountdown(nextRefresh, failed ? 'RETRY IN' : 'NEXT REFRESH IN');
   }
 
   // ── Render ──
