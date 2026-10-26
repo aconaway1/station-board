@@ -7,6 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script>
+  // Set theme before first paint to avoid a flash. Saved choice wins; otherwise follow the OS.
+  (function () {
+    let t = null;
+    try { t = localStorage.getItem('board_theme'); } catch (e) {}
+    if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
 <!-- Leaflet loaded on demand by app.js -->
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -20,9 +29,45 @@
     --blue: #4db8ff;
     --muted: #4a5568;
     --text: #e2e8f0;
+    --amber-deep: #d4891a;
+    --faint: #2d3748;
+    --line: #1e2a35;
+    --hairline: rgba(255,255,255,0.03);
+    --hover: rgba(255,255,255,0.02);
+    --sunken: rgba(0,0,0,0.25);
+    --scanline: rgba(0,0,0,0.08);
+    --debug-1: #607585;
+    --debug-2: #3d5060;
+    --debug-ts: #2d3d4a;
+    --console: #070a0d;
+    color-scheme: dark;
     --font-display: 'Bebas Neue', sans-serif;
     --font-mono: 'Share Tech Mono', monospace;
     --font-body: 'DM Sans', sans-serif;
+  }
+
+  /* Light theme: accents darkened so they stay readable on white */
+  :root[data-theme="light"] {
+    --bg: #f3f1ec;
+    --panel: #ffffff;
+    --amber: #b06800;
+    --green: #12804d;
+    --red: #c92a2a;
+    --blue: #0b67a8;
+    --muted: #5b6676;
+    --text: #1a202c;
+    --amber-deep: #8f5400;
+    --faint: #a0aab8;
+    --line: #dde2e8;
+    --hairline: rgba(0,0,0,0.07);
+    --hover: rgba(0,0,0,0.03);
+    --sunken: rgba(0,0,0,0.035);
+    --scanline: transparent;
+    --debug-1: #5b6676;
+    --debug-2: #8a94a3;
+    --debug-ts: #a0aab8;
+    --console: #f7f8fa;
+    color-scheme: light;
   }
 
   body {
@@ -44,8 +89,8 @@
       0deg,
       transparent,
       transparent 2px,
-      rgba(0,0,0,0.08) 2px,
-      rgba(0,0,0,0.08) 4px
+      var(--scanline) 2px,
+      var(--scanline) 4px
     );
   }
 
@@ -145,7 +190,7 @@
 
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--amber), #d4891a);
+    background: linear-gradient(90deg, var(--amber), var(--amber-deep));
     border-radius: 2px;
     transition: width 1s linear;
   }
@@ -253,13 +298,13 @@
     grid-template-columns: 70px 1fr 1fr 140px 130px;
     padding: 12px 16px;
     align-items: center;
-    border-bottom: 1px solid rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--hairline);
     border-left: 3px solid transparent;
     transition: background 0.2s;
   }
 
   .board-row:hover {
-    background: rgba(255,255,255,0.02);
+    background: var(--hover);
   }
 
   .board-row:last-child { border-bottom: none; }
@@ -440,8 +485,8 @@
     max-height: 0;
     overflow: hidden;
     transition: max-height 0.3s ease;
-    background: rgba(0,0,0,0.25);
-    border-bottom: 1px solid rgba(255,255,255,0.03);
+    background: var(--sunken);
+    border-bottom: 1px solid var(--hairline);
   }
 
   .detail-panel.open {
@@ -548,7 +593,7 @@
     grid-template-columns: 70px 1fr 1fr 140px 130px;
     padding: 12px 16px;
     gap: 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--hairline);
   }
 
   .skeleton-block {
@@ -665,8 +710,8 @@
     left: 0;
     right: 0;
     height: 35vh;
-    background: #070a0d;
-    border-top: 1px solid #1e2a35;
+    background: var(--console);
+    border-top: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     z-index: 900;
@@ -678,7 +723,7 @@
     align-items: center;
     gap: 10px;
     padding: 5px 12px;
-    border-bottom: 1px solid #1e2a35;
+    border-bottom: 1px solid var(--line);
     flex-shrink: 0;
   }
   .debug-toolbar-label {
@@ -690,7 +735,7 @@
   }
   .debug-level-btn {
     background: transparent;
-    border: 1px solid #2d3748;
+    border: 1px solid var(--faint);
     color: var(--muted);
     font-family: var(--font-mono);
     font-size: 0.6rem;
@@ -731,10 +776,10 @@
     white-space: pre-wrap;
     word-break: break-all;
   }
-  .debug-entry.lvl-1 { color: #607585; }
-  .debug-entry.lvl-2 { color: #3d5060; }
+  .debug-entry.lvl-1 { color: var(--debug-1); }
+  .debug-entry.lvl-2 { color: var(--debug-2); }
   .debug-entry.lvl-err { color: rgba(200,70,70,0.85); }
-  .debug-ts { color: #2d3d4a; margin-right: 8px; }
+  .debug-ts { color: var(--debug-ts); margin-right: 8px; }
   .debug-tag { color: rgba(245,166,35,0.55); margin-right: 6px; }
 
   .map-overlay {
@@ -790,6 +835,28 @@
     animation: stale-blink 1.5s ease-in-out infinite;
   }
   body.stale .stale-badge { display: inline; }
+  body.stale .status-dot { background: var(--red); }
+  .stale-banner {
+    display: none;
+    background: rgba(255,77,77,0.14);
+    border: 1px solid rgba(255,77,77,0.5);
+    border-left: 4px solid var(--red);
+    color: var(--red);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    letter-spacing: 1px;
+    padding: 10px 16px;
+    border-radius: 4px;
+    margin-bottom: 12px;
+  }
+  body.stale .stale-banner { display: block; }
+  .gps-stale {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--red);
+    letter-spacing: 1px;
+    margin-top: 2px;
+  }
   body.stale .station-name {
     text-shadow: 0 0 18px rgba(255,77,77,0.7), 0 0 40px rgba(255,77,77,0.3);
   }
@@ -841,10 +908,15 @@
     <button class="clear-btn" id="clearStationBtn">CLEAR DATA</button>
     <span class="switcher-divider"></span>
     <button class="alert-btn" id="alertToggleBtn" title="Notify when a train is arriving soon">ALERTS: OFF</button>
+    <span class="switcher-divider"></span>
+    <button class="alert-btn" id="themeToggleBtn" title="Switch between dark and light mode">THEME: DARK</button>
   </div>
 
   <!-- Error banner -->
   <div class="error-banner" id="errorBanner"></div>
+
+  <!-- Stale data banner -->
+  <div class="stale-banner" id="staleBanner" role="alert"></div>
 
   <!-- Status bar -->
   <div class="status-bar">
@@ -879,12 +951,12 @@
   </div>
 </div>
 
-<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:#2d3748;letter-spacing:0.05em;">Station Board v1.7.1 &mdash; &copy; 2026</div>
+<div style="text-align:center;padding:1.2rem 0 0.6rem;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--faint);letter-spacing:0.05em;">Station Board v1.9.0 &mdash; &copy; 2026</div>
 <div style="text-align:center;padding-bottom:0.4rem;">
-  <a id="clearAllBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:#2d3748;letter-spacing:0.05em;text-decoration:none;">clear all data</a>
+  <a id="clearAllBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:var(--faint);letter-spacing:0.05em;text-decoration:none;">clear all data</a>
 </div>
 <div style="text-align:center;padding-bottom:1.2rem;">
-  <a id="debugToggleBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:#2d3748;letter-spacing:0.05em;text-decoration:none;">debug</a>
+  <a id="debugToggleBtn" href="#" style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:var(--faint);letter-spacing:0.05em;text-decoration:none;">debug</a>
 </div>
 
 <div id="debugPanel" class="debug-panel" style="display:none;">
@@ -939,6 +1011,8 @@
   const REFRESH_MS = 10 * 60 * 1000;
   const RERENDER_MS = 30000;
   const ARRIVING_SOON_MS = 10 * 60 * 1000;
+  const FEED_STALE_MS = 15 * 60 * 1000;   // whole feed hasn't produced new data
+  const TRAIN_STALE_MS = 20 * 60 * 1000;  // a single train's GPS hasn't updated
 
   // ── Grouped state ──
   function getStationMetaKey(code) { return `amtrak_meta_${code}`; }
@@ -975,6 +1049,9 @@
 
   let railcamUrl = null;
   let lastFetchTime = null;
+  let dataAsOf = null;      // ms: when the source last produced the data on screen
+  let dataSource = '';
+  let fetchFailed = false;
   let lastTrainData = null;
   let fetchController = null;
   let isFetching = false;
@@ -1210,7 +1287,7 @@
       }
     }
     tick();
-    setInterval(tick, 1000);
+    setInterval(() => { tick(); updateStaleness(); }, 1000);
   }
 
   // ── Timers ──
@@ -1304,7 +1381,7 @@
   function saveLiveCache(rows) {
     try {
       const serializable = rows.map(r => ({ ...r, arrivalDate: r.arrivalDate.getTime() }));
-      localStorage.setItem(getLiveCacheKey(), JSON.stringify({ ts: Date.now(), rows: serializable }));
+      localStorage.setItem(getLiveCacheKey(), JSON.stringify({ ts: Date.now(), dataAsOf, dataSource, rows: serializable }));
       dbg(2, 'cache', `live saved ${rows.length} rows`);
     } catch (e) {
       dbgErr('cache', `live save failed: ${e.message}`);
@@ -1315,23 +1392,58 @@
     try {
       const raw = localStorage.getItem(getLiveCacheKey());
       if (!raw) { dbg(1, 'cache', 'live miss'); return null; }
-      const { ts, rows } = JSON.parse(raw);
+      const { ts, dataAsOf: cachedAsOf, dataSource: cachedSource, rows } = JSON.parse(raw);
       const ageSec = Math.round((Date.now() - ts) / 1000);
       dbg(1, 'cache', `live hit, age ${ageSec}s, ${rows.length} rows`);
-      return { ts, rows: rows.map(r => ({ ...r, arrivalDate: new Date(r.arrivalDate) })) };
+      return { ts, dataAsOf: cachedAsOf || ts, dataSource: cachedSource || '', rows: rows.map(r => ({ ...r, arrivalDate: new Date(r.arrivalDate) })) };
     } catch (e) {
       dbgErr('cache', `live load failed: ${e.message}`);
       return null;
     }
   }
 
-  function setStale(ts) {
-    document.body.classList.add('stale');
-    const staleTime = new Date(ts);
-    $('lastUpdated').textContent = `STALE — LAST KNOWN ${formatTimeInTz(staleTime, station.tz)}`;
+  // ── Staleness ──
+  // Parse an API timestamp (ISO string or unix seconds). Future values are ignored:
+  // both APIs report projected times for trains that haven't departed yet.
+  function parsePastTs(v) {
+    if (v == null || v === '') return null;
+    const ms = typeof v === 'number' ? v * 1000 : Date.parse(v);
+    if (!Number.isFinite(ms) || ms > Date.now() + 2 * 60 * 1000) return null;
+    return Math.min(ms, Date.now());
+  }
+
+  function fmtAge(ms) {
+    const m = Math.floor(ms / 60000);
+    if (m < 1) return '<1 MIN';
+    if (m < 60) return `${m} MIN`;
+    return `${Math.floor(m / 60)}H ${m % 60}M`;
+  }
+
+  function isDataStale() {
+    if (dataAsOf == null) return false;
+    return fetchFailed || Date.now() - dataAsOf > FEED_STALE_MS;
+  }
+
+  function updateStaleness() {
+    if (dataAsOf == null) { document.body.classList.remove('stale'); return; }
+    const stale = isDataStale();
+    document.body.classList.toggle('stale', stale);
+    if (stale) {
+      const age = fmtAge(Date.now() - dataAsOf);
+      const asOf = formatTimeInTz(new Date(dataAsOf), station.tz);
+      $('lastUpdated').textContent = `STALE — DATA FROM ${asOf} (${age} AGO)`;
+      const why = fetchFailed
+        ? 'Train APIs are unreachable — showing cached data.'
+        : `${dataSource || 'The live feed'} hasn't published new data since ${asOf}.`;
+      $('staleBanner').textContent = `⚠ LIVE DATA IS ${age} OLD. ${why} Arrival times may be wrong.`;
+    } else if (lastFetchTime) {
+      $('lastUpdated').textContent = `LAST UPDATED ${formatTimeInTz(lastFetchTime, station.tz)}`;
+    }
   }
 
   function clearStale() {
+    dataAsOf = null;
+    fetchFailed = false;
     document.body.classList.remove('stale');
   }
 
@@ -1525,6 +1637,7 @@
       heading: train.location?.heading,
       velocity: train.location?.speed,
       eventName: null,
+      lastValTS: train.location?.latitude != null ? train.last_updated : null,
       stations: (train.stops || []).map(stop => {
         const schArr = stop.sched_arrive ? new Date(stop.sched_arrive * 1000).toISOString() : null;
         const schDep = stop.sched_depart ? new Date(stop.sched_depart * 1000).toISOString() : null;
@@ -1571,7 +1684,8 @@
     }
     const trainNums = Object.keys(byNum);
     const trainResults = trainNums.map(num => byNum[num]);
-    return { stationData, trainNums, trainResults };
+    const feedTs = parsePastTs(tdStation.last_updated) ?? Date.now();
+    return { stationData, trainNums, trainResults, feedTs };
   }
 
   // ── Data processing (extracted from fetchAndRender) ──
@@ -1642,7 +1756,8 @@
       trainLat: bestRun.lat,
       trainLon: bestRun.lon,
       heading: bestRun.heading,
-      velocity: bestRun.velocity
+      velocity: bestRun.velocity,
+      posTs: bestRun.lat != null ? parsePastTs(bestRun.lastValTS) : null
     };
   }
 
@@ -1770,7 +1885,7 @@
     dbg(1, 'fetch', `starting for ${station.code}`);
 
     try {
-      let stationData, trainNums, trainResults;
+      let stationData, trainNums, trainResults, feedTs, source;
       const amtrakerTimeout = new AbortController();
       const amtrakerTimeoutId = setTimeout(() => amtrakerTimeout.abort(), 5000);
       try {
@@ -1780,13 +1895,34 @@
         trainNums = [...new Set(runIds.map(id => id.split('-')[0]))];
         trainResults = await Promise.all(trainNums.map(num => fetchTrain(num, amtrakerTimeout.signal)));
         clearTimeout(amtrakerTimeoutId);
-        dbg(1, 'fetch', `amtraker ok, ${trainNums.length} train(s): ${trainNums.join(', ')}`);
+        // updatedAt = when amtraker last scraped Amtrak; same across runs, take the newest
+        const scraped = trainResults.flat().filter(Boolean).map(r => parsePastTs(r.updatedAt)).filter(v => v != null);
+        feedTs = scraped.length ? Math.max(...scraped) : Date.now();
+        source = 'Amtraker';
+        dbg(1, 'fetch', `amtraker ok, ${trainNums.length} train(s): ${trainNums.join(', ')}, feed age ${fmtAge(Date.now() - feedTs)}`);
       } catch (primaryErr) {
         clearTimeout(amtrakerTimeoutId);
         if (signal.aborted) throw primaryErr;
         dbg(1, 'fetch', `amtraker failed (${primaryErr.message}), trying transitdocs`);
-        ({ stationData, trainNums, trainResults } = await fetchTransitdocs(signal));
+        ({ stationData, trainNums, trainResults, feedTs } = await fetchTransitdocs(signal));
+        source = 'TransitDocs';
         dbg(1, 'fetch', `transitdocs ok, ${trainNums.length} train(s): ${trainNums.join(', ')}`);
+      }
+
+      // Amtraker answered but its feed is frozen — use TransitDocs if it's fresher
+      if (source === 'Amtraker' && Date.now() - feedTs > FEED_STALE_MS) {
+        dbg(1, 'fetch', `amtraker feed stale (${fmtAge(Date.now() - feedTs)}), checking transitdocs`);
+        try {
+          const td = await fetchTransitdocs(signal);
+          if (td.feedTs > feedTs) {
+            ({ stationData, trainNums, trainResults, feedTs } = td);
+            source = 'TransitDocs';
+            dbg(1, 'fetch', `using transitdocs, feed age ${fmtAge(Date.now() - feedTs)}`);
+          }
+        } catch (tdErr) {
+          if (signal.aborted) throw tdErr;
+          dbg(1, 'fetch', `transitdocs failed (${tdErr.message}), keeping amtraker`);
+        }
       }
 
       updateHeader(stationData);
@@ -1797,14 +1933,16 @@
       dbg(1, 'fetch', `done in ${Date.now() - fetchStart}ms — ${displayRows.length} rows (${live} live, ${displayRows.length - live} scheduled)`);
 
       lastTrainData = displayRows;
+      lastFetchTime = new Date();
+      dataAsOf = feedTs;
+      dataSource = source;
+      fetchFailed = false;
       saveLiveCache(displayRows);
-      clearStale();
-      renderBoard(displayRows, true);
+      updateStaleness();
+      // Don't fire arrival alerts off a frozen feed
+      renderBoard(displayRows, !isDataStale());
       updateOpenMap(displayRows);
       startRerender();
-
-      lastFetchTime = new Date();
-      $('lastUpdated').textContent = `LAST UPDATED ${formatTimeInTz(lastFetchTime, station.tz)}`;
       dot.classList.remove('loading');
 
     } catch (err) {
@@ -1828,7 +1966,10 @@
         renderBoard(refreshRows(liveCache.rows));
         updateOpenMap(liveCache.rows);
         startRerender();
-        setStale(liveCache.ts);
+        dataAsOf = liveCache.dataAsOf;
+        dataSource = liveCache.dataSource;
+        fetchFailed = true;
+        updateStaleness();
       } else {
         const schedule = loadSchedule();
         const cached = refreshRows(Object.entries(schedule)
@@ -1871,6 +2012,7 @@
         <div>
           <div class="route-name">${escHtml(t.route)}${t.runDay ? ` (${escHtml(t.runDay)})` : ''}</div>
           ${t.nearestStation ? `<div class="route-nearest">${escHtml(t.nearestStation)}</div>` : ''}
+          ${t.isLive && t.posTs && Date.now() - t.posTs > TRAIN_STALE_MS ? `<div class="gps-stale">LAST GPS ${fmtAge(Date.now() - t.posTs)} AGO</div>` : ''}
           ${isArrivingSoon(t) && railcamUrl ? `<a class="railcam-link" href="${railcamUrl}" target="_blank" rel="noopener">WATCH RAILCAM</a>` : ''}
         </div>
         <div class="direction col-dir">${escHtml(t.dir)}</div>
@@ -2214,7 +2356,7 @@
       clearAllArmTimer = setTimeout(() => {
         link.dataset.armed = '';
         link.textContent = 'clear all data';
-        link.style.color = '#2d3748';
+        link.style.color = 'var(--faint)';
       }, 3000);
     }
   });
@@ -2230,6 +2372,18 @@
     localStorage.setItem('amtrak_alerts_enabled', '0');
   }
   syncAlertToggleBtn();
+
+  // ── Theme ──
+  function syncThemeButton() {
+    $('themeToggleBtn').textContent = `THEME: ${document.documentElement.dataset.theme === 'light' ? 'LIGHT' : 'DARK'}`;
+  }
+  $('themeToggleBtn').addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('board_theme', next); } catch (e) {}
+    syncThemeButton();
+  });
+  syncThemeButton();
 
   $('alertToggleBtn').addEventListener('click', () => {
     if (!alertsEnabled) {
